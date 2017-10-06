@@ -543,7 +543,6 @@ struct rt_rq {
 	atomic_long_t removed_util_avg;
 	atomic_long_t removed_load_avg;
 
-
 #endif /* CONFIG_SMP */
 	int rt_queued;
 
