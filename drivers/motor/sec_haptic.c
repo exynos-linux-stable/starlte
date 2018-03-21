@@ -178,6 +178,13 @@ static void timed_output_enable(struct sec_haptic_drvdata *ddata, unsigned int v
 	}
 }
 
+#ifdef CONFIG_WAKE_GESTURES
+void vib_trigger(int value)
+{
+	timed_output_enable(pddata, value);
+}
+#endif
+
 static enum hrtimer_restart haptic_timer_func(struct hrtimer *timer)
 {
 	struct sec_haptic_drvdata *ddata
