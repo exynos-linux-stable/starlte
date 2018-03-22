@@ -16,9 +16,9 @@
 #include <linux/uh.h>
 
 #ifdef CONFIG_UH_RKP_8G
-#define uh_ELF_PATH "init/uh.8g.elf"
+#define uh_ELF_PATH "init/uh.8g.elf.h"
 #else
-#define uh_ELF_PATH "init/uh.elf"
+#define uh_ELF_PATH "init/uh.elf.h"
 #endif
 #define SMC_64BIT_RET_MAGIC 0xC2000401
 
