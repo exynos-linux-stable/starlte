@@ -15,8 +15,6 @@
 
 #include <linux/uh.h>
 
-#define uh_ELF_PATH "init/uh.elf"
-
 #define SMC_64BIT_RET_MAGIC 0xC2000401
 
 .section .init.text, "ax"
@@ -34,7 +32,7 @@ _uh_disable:
 
 .global _start_uh
 _start_uh:
-.incbin uh_ELF_PATH
+.incbin "init/uh.elf.h"
 .global _end_uh
 _end_uh:
 .section .text
