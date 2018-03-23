@@ -34,6 +34,24 @@
 #define LIT	0
 #define BIG	1
 
+extern unsigned long arg_cpu_max_c2;
+static unsigned long arg_overclock = 0;
+
+static int read_overclock(char *oc)
+{
+	unsigned long ui_oc;
+	int ret;
+
+	ret = kstrtoul(oc, 0, &ui_oc);
+	if (ret)
+		return -EINVAL;
+
+	arg_overclock = ui_oc;
+
+	return ret;
+}
+__setup("overclock=", read_overclock);
+
 enum hpgov_event {
 	HPGOV_SLACK_TIMER_EXPIRED = 1,	/* slack timer expired */
 };
@@ -968,23 +986,36 @@ static int __init exynos_hpgov_parse_dt(void)
 
 	if (of_property_read_u32(np, "cal-id", &exynos_hpgov.cal_id))
 		goto exit;
-	max_freq = (int)cal_dfs_get_max_freq(exynos_hpgov.cal_id);
+
+
+	max_freq = arg_cpu_max_c2;
 	if (!max_freq)
 		goto exit;
 	exynos_hpgov.maxfreq_table[SINGLE] = max_freq;
 
-	if (of_property_read_u32(np, "dual_freq", &freq))
-		goto exit;
-	exynos_hpgov.maxfreq_table[DUAL] = min(freq, max_freq);
+	if (arg_overclock == 1) {
+		exynos_hpgov.maxfreq_table[DUAL] = 2314000;
+		exynos_hpgov.maxfreq_table[TRIPLE] = 1924000;
+		exynos_hpgov.maxfreq_table[QUAD] = 1924000;
 
-	if (of_property_read_u32(np, "triple_freq", &freq))
-		goto exit;
-	exynos_hpgov.maxfreq_table[TRIPLE] = min(freq, max_freq);
+	} else if (arg_overclock == 2) {
+		exynos_hpgov.maxfreq_table[DUAL] = 2496000;
+		exynos_hpgov.maxfreq_table[TRIPLE] = 2002000;
+		exynos_hpgov.maxfreq_table[QUAD] = 2002000;
 
-	if (of_property_read_u32(np, "quad_freq", &freq))
-		goto exit;
-	exynos_hpgov.maxfreq_table[QUAD] = min(freq, max_freq);
+	} else {
+		if (of_property_read_u32(np, "dual_freq", &freq))
+			goto exit;
+		exynos_hpgov.maxfreq_table[DUAL] = min(freq, max_freq);
 
+		if (of_property_read_u32(np, "triple_freq", &freq))
+			goto exit;
+		exynos_hpgov.maxfreq_table[TRIPLE] = min(freq, max_freq);
+
+		if (of_property_read_u32(np, "quad_freq", &freq))
+			goto exit;
+		exynos_hpgov.maxfreq_table[QUAD] = min(freq, max_freq);
+	}
 	exynos_hpgov.maxfreq_table[DISABLE] = exynos_hpgov.maxfreq_table[QUAD];
 
 	for (i = 0; i <= QUAD; i++)
