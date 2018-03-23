@@ -48,11 +48,11 @@
 #define SWEEP_Y_LIMIT           SWEEP_Y_MAX-SWEEP_EDGE
 #define SWEEP_X_LIMIT           SWEEP_X_MAX-SWEEP_EDGE
 #define SWEEP_X_B1              1200
-#define SWEEP_X_B2              2000
+#define SWEEP_X_B2              2200
 #define SWEEP_X_START		1500
 #define SWEEP_X_FINAL           1500
 #define SWEEP_Y_START		2000
-#define SWEEP_Y_NEXT            100
+#define SWEEP_Y_NEXT            200
 #define DT2W_FEATHER		150
 #define DT2W_TIME 		500
 
