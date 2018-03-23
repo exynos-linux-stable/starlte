@@ -2114,6 +2114,13 @@ static struct inode *shmem_get_inode(struct super_block *sb, const struct inode 
 		inode->i_blocks = 0;
 		inode->i_atime = inode->i_mtime = inode->i_ctime = current_time(inode);
 		inode->i_generation = get_seconds();
+		/*
+		 * removal of __GFP_HIGHMEM breaks GFP_HIGHUSER_MOVABLE. It is
+		 * required not to allocate CMA pages to the page caches of
+		 * shmem.
+		 */
+		mapping_set_gfp_mask(inode->i_mapping,
+			mapping_gfp_mask(inode->i_mapping) & ~__GFP_HIGHMEM);
 		info = SHMEM_I(inode);
 		memset(info, 0, (char *)inode - (char *)info);
 		spin_lock_init(&info->lock);
@@ -4067,6 +4074,14 @@ struct file *shmem_file_setup(const char *name, loff_t size, unsigned long flags
 }
 EXPORT_SYMBOL_GPL(shmem_file_setup);
 
+void shmem_set_file(struct vm_area_struct *vma, struct file *file)
+{
+	if (vma->vm_file)
+		fput(vma->vm_file);
+	vma->vm_file = file;
+	vma->vm_ops = &shmem_vm_ops;
+}
+
 /**
  * shmem_zero_setup - setup a shared anonymous mapping
  * @vma: the vma to be mmapped is prepared by do_mmap_pgoff
@@ -4086,10 +4101,7 @@ int shmem_zero_setup(struct vm_area_struct *vma)
 	if (IS_ERR(file))
 		return PTR_ERR(file);
 
-	if (vma->vm_file)
-		fput(vma->vm_file);
-	vma->vm_file = file;
-	vma->vm_ops = &shmem_vm_ops;
+	shmem_set_file(vma, file);
 
 	if (IS_ENABLED(CONFIG_TRANSPARENT_HUGE_PAGECACHE) &&
 			((vma->vm_start + ~HPAGE_PMD_MASK) & HPAGE_PMD_MASK) <

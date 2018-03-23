@@ -80,3 +80,7 @@ obj-$(CONFIG_MMC_SDHCI_BRCMSTB)		+= sdhci-brcmstb.o
 ifeq ($(CONFIG_CB710_DEBUG),y)
 	CFLAGS-cb710-mmc	+= -DDEBUG
 endif
+
+obj-$(CONFIG_MMC_DW_EXYNOS_FMP) += dw_mmc-exynos-fmp.o
+obj-$(CONFIG_MMC_DW_EXYNOS_SMU) += dw_mmc-exynos-smu.o
+obj-$(CONFIG_MMC_SRPMB)		+= dw_mmc-srpmb.o

@@ -26,6 +26,8 @@
 #include <linux/backing-dev.h>
 #include <linux/fscrypto.h>
 
+#include <crypto/fmp.h>
+
 #include "ext4_jbd2.h"
 #include "xattr.h"
 #include "acl.h"
@@ -465,8 +467,13 @@ int ext4_bio_write_page(struct ext4_io_submit *io,
 
 	bh = head = page_buffers(page);
 
+#ifdef CONFIG_FS_PRIVATE_ENCRYPTION
+	if (ext4_encrypted_inode(inode) && S_ISREG(inode->i_mode) &&
+	    nr_to_submit && !inode->i_mapping->fmp_ci.private_algo_mode) {
+#else
 	if (ext4_encrypted_inode(inode) && S_ISREG(inode->i_mode) &&
 	    nr_to_submit) {
+#endif /* CONFIG_FS_PRIVATE_ENCRYPTION */
 		gfp_t gfp_flags = GFP_NOFS;
 
 	retry_encrypt:

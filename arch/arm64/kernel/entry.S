@@ -29,7 +29,9 @@
 #include <asm/esr.h>
 #include <asm/irq.h>
 #include <asm/memory.h>
+#include <asm/ptrace.h>
 #include <asm/thread_info.h>
+#include <asm/uaccess.h>
 #include <asm/asm-uaccess.h>
 #include <asm/unistd.h>
 
@@ -69,7 +71,11 @@
 #define BAD_ERROR	3
 
 	.macro	kernel_entry, el, regsize = 64
+	.if	\el == 0
 	sub	sp, sp, #S_FRAME_SIZE
+	.else
+	sub	sp, sp, #(S_FRAME_SIZE+PRESERVE_STACK_SIZE)
+	.endif /* \el == 0 */
 	.if	\regsize == 32
 	mov	w0, w0				// zero upper 32 bits of x0
 	.endif
@@ -98,7 +104,7 @@
 
 	mov	x29, xzr			// fp pointed to user-space
 	.else
-	add	x21, sp, #S_FRAME_SIZE
+	add	x21, sp, #(S_FRAME_SIZE+PRESERVE_STACK_SIZE)
 	get_thread_info tsk
 	/* Save the task's original addr_limit and set USER_DS (TASK_SIZE_64) */
 	ldr	x20, [tsk, #TI_ADDR_LIMIT]
@@ -110,6 +116,32 @@
 	mrs	x22, elr_el1
 	mrs	x23, spsr_el1
 	stp	lr, x21, [sp, #S_LR]
+
+#ifdef CONFIG_ARM64_SW_TTBR0_PAN
+	/*
+	 * Set the TTBR0 PAN bit in SPSR. When the exception is taken from
+	 * EL0, there is no need to check the state of TTBR0_EL1 since
+	 * accesses are always enabled.
+	 * Note that the meaning of this bit differs from the ARMv8.1 PAN
+	 * feature as all TTBR0_EL1 accesses are disabled, not just those to
+	 * user mappings.
+	 */
+alternative_if ARM64_HAS_PAN
+	b	1f				// skip TTBR0 PAN
+alternative_else_nop_endif
+
+	.if	\el != 0
+	mrs	x21, ttbr0_el1
+	tst	x21, #0xffff << 48		// Check for the reserved ASID
+	orr	x23, x23, #PSR_PAN_BIT		// Set the emulated PAN in the saved SPSR
+	b.eq	1f				// TTBR0 access already disabled
+	and	x23, x23, #~PSR_PAN_BIT		// Clear the emulated PAN in the saved SPSR
+	.endif
+
+	__uaccess_ttbr0_disable x21
+1:
+#endif
+
 	stp	x22, x23, [sp, #S_PC]
 
 	/*
@@ -148,6 +180,40 @@
 	ldp	x21, x22, [sp, #S_PC]		// load ELR, SPSR
 	.if	\el == 0
 	ct_user_enter
+	.endif
+
+#ifdef CONFIG_ARM64_SW_TTBR0_PAN
+	/*
+	 * Restore access to TTBR0_EL1. If returning to EL0, no need for SPSR
+	 * PAN bit checking.
+	 */
+alternative_if ARM64_HAS_PAN
+	b	2f				// skip TTBR0 PAN
+alternative_else_nop_endif
+
+	.if	\el != 0
+	tbnz	x22, #22, 1f			// Skip re-enabling TTBR0 access if the PSR_PAN_BIT is set
+	.endif
+
+	__uaccess_ttbr0_enable x0
+
+	.if	\el == 0
+	/*
+	 * Enable errata workarounds only if returning to user. The only
+	 * workaround currently required for TTBR0_EL1 changes are for the
+	 * Cavium erratum 27456 (broadcast TLBI instructions may cause I-cache
+	 * corruption).
+	 */
+	post_ttbr0_update_workaround
+	.endif
+1:
+	.if	\el != 0
+	and	x22, x22, #~PSR_PAN_BIT		// ARMv8.0 CPUs do not understand this bit
+	.endif
+2:
+#endif
+
+	.if	\el == 0
 	ldr	x23, [sp, #S_SP]		// load return stack pointer
 	msr	sp_el0, x23
 #ifdef CONFIG_ARM64_ERRATUM_845719
@@ -163,6 +229,7 @@ alternative_if ARM64_WORKAROUND_845719
 alternative_else_nop_endif
 #endif
 	.endif
+
 	msr	elr_el1, x21			// set up the return data
 	msr	spsr_el1, x22
 	ldp	x0, x1, [sp, #16 * 0]
@@ -181,12 +248,12 @@ alternative_else_nop_endif
 	ldp	x26, x27, [sp, #16 * 13]
 	ldp	x28, x29, [sp, #16 * 14]
 	ldr	lr, [sp, #S_LR]
+	.if	\el == 0
 	add	sp, sp, #S_FRAME_SIZE		// restore sp
+	.else
+	add	sp, sp, #(S_FRAME_SIZE+PRESERVE_STACK_SIZE)
+	.endif /* \el == 0 */
 	eret					// return to kernel
-	.endm
-
-	.macro	get_thread_info, rd
-	mrs	\rd, sp_el0
 	.endm
 
 	.macro	irq_stack_entry
@@ -256,7 +323,11 @@ tsk	.req	x28		// current thread_info
 	.pushsection ".entry.text", "ax"
 
 	.align	11
+#ifdef CONFIG_RKP_CFP_JOPP
+VECTOR_ENTRY(vectors)
+#else
 ENTRY(vectors)
+#endif
 	ventry	el1_sync_invalid		// Synchronous EL1t
 	ventry	el1_irq_invalid			// IRQ EL1t
 	ventry	el1_fiq_invalid			// FIQ EL1t
@@ -343,7 +414,40 @@ ENDPROC(el1_error_invalid)
  */
 	.align	6
 el1_sync:
+/* store used gprs(x0, x1) through stack */
+	stp     x0, x1, [sp, #-0x10]!
+	mrs     x0, esr_el1
+	mov     x1, #0x30
+	movk    x1, #0x9600, lsl #0x10
+        cmp     x0, x1
+        b.eq    96f
+	movk    x1, #0x8600, lsl #0x10
+        cmp     x0, x1
+        b.eq    86f
+	b	skip
+96:
+86:
+/* recovery tlb confilict */
+	dsb     sy
+	tlbi    vmalle1is
+	dsb     sy
+
+/* Add count for recovery count */
+        ldr_l   x0, __tlb_conflict_cnt
+        add     x0, x0, #1
+	cmp     x0, #0x100
+        b.ge    skip
+        str_l   x0, __tlb_conflict_cnt, x1
+	ldp	x0, x1, [sp]
+	add	sp, sp, #0x10
+        kernel_entry 1
+        kernel_exit 1
+skip:
+	ldp	x0, x1, [sp]
+	add	sp, sp, #0x10
 	kernel_entry 1
+	mov	x9, #0
+	str_l	x9, __tlb_conflict_cnt, x8
 	mrs	x1, esr_el1			// read the syndrome register
 	lsr	x24, x1, #ESR_ELx_EC_SHIFT	// exception class
 	cmp	x24, #ESR_ELx_EC_DABT_CUR	// data abort in EL1
@@ -397,6 +501,7 @@ el1_undef:
 	 */
 	enable_dbg
 	mov	x0, sp
+	mrs	x1, esr_el1			// read the syndrome register
 	b	do_undefinstr
 el1_dbg:
 	/*
@@ -596,6 +701,7 @@ el0_undef:
 	enable_dbg_and_irq
 	ct_user_exit
 	mov	x0, sp
+	mrs	x1, esr_el1			// read the syndrome register
 	bl	do_undefinstr
 	b	ret_to_user
 el0_sys:
@@ -808,3 +914,4 @@ ENTRY(sys_rt_sigreturn_wrapper)
 	mov	x0, sp
 	b	sys_rt_sigreturn
 ENDPROC(sys_rt_sigreturn_wrapper)
+

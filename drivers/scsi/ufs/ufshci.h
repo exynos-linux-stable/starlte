@@ -63,6 +63,7 @@ enum {
 	REG_UTP_TRANSFER_REQ_DOOR_BELL		= 0x58,
 	REG_UTP_TRANSFER_REQ_LIST_CLEAR		= 0x5C,
 	REG_UTP_TRANSFER_REQ_LIST_RUN_STOP	= 0x60,
+	REG_UTP_TRANSFER_REQ_LIST_CNR	= 0x64,
 	REG_UTP_TASK_REQ_LIST_BASE_L		= 0x70,
 	REG_UTP_TASK_REQ_LIST_BASE_H		= 0x74,
 	REG_UTP_TASK_REQ_DOOR_BELL		= 0x78,
@@ -72,6 +73,7 @@ enum {
 	REG_UIC_COMMAND_ARG_1			= 0x94,
 	REG_UIC_COMMAND_ARG_2			= 0x98,
 	REG_UIC_COMMAND_ARG_3			= 0x9C,
+	REG_CRYPTO_CAPABILITY			= 0x100,
 };
 
 /* Controller capability masks */
@@ -135,11 +137,13 @@ enum {
 #define UFSHCD_ERROR_MASK	(UIC_ERROR |\
 				DEVICE_FATAL_ERROR |\
 				CONTROLLER_FATAL_ERROR |\
-				SYSTEM_BUS_FATAL_ERROR)
+				SYSTEM_BUS_FATAL_ERROR |\
+				UIC_LINK_LOST)
 
 #define INT_FATAL_ERRORS	(DEVICE_FATAL_ERROR |\
 				CONTROLLER_FATAL_ERROR |\
-				SYSTEM_BUS_FATAL_ERROR)
+				SYSTEM_BUS_FATAL_ERROR |\
+				UIC_LINK_LOST)
 
 /* HCS - Host Controller Status 30h */
 #define DEVICE_PRESENT				UFS_BIT(0)
@@ -170,17 +174,31 @@ enum {
 /* UECDL - Host UIC Error Code Data Link Layer 3Ch */
 #define UIC_DATA_LINK_LAYER_ERROR		UFS_BIT(31)
 #define UIC_DATA_LINK_LAYER_ERROR_CODE_MASK	0x7FFF
-#define UIC_DATA_LINK_LAYER_ERROR_PA_INIT	0x2000
+#define UIC_DATA_LINK_LAYER_ERROR_TCX_REP_TIMER_EXP	UFS_BIT(1)
+#define UIC_DATA_LINK_LAYER_ERROR_AFCX_REQ_TIMER_EXP	UFS_BIT(2)
+#define UIC_DATA_LINK_LAYER_ERROR_FCX_PRO_TIMER_EXP	UFS_BIT(3)
+#define UIC_DATA_LINK_LAYER_ERROR_RX_BUF_OF	UFS_BIT(5)
+#define UIC_DATA_LINK_LAYER_ERROR_PA_INIT	UFS_BIT(13)
 #define UIC_DATA_LINK_LAYER_ERROR_NAC_RECEIVED	0x0001
 #define UIC_DATA_LINK_LAYER_ERROR_TCx_REPLAY_TIMEOUT 0x0002
 
 /* UECN - Host UIC Error Code Network Layer 40h */
 #define UIC_NETWORK_LAYER_ERROR			UFS_BIT(31)
 #define UIC_NETWORK_LAYER_ERROR_CODE_MASK	0x7
+#define UIC_NETWORK_UNSUPPORTED_HEADER_TYPE	BIT(0)
+#define UIC_NETWORK_BAD_DEVICEID_ENC		BIT(1)
+#define UIC_NETWORK_LHDR_TRAP_PACKET_DROPPING	BIT(2)
 
 /* UECT - Host UIC Error Code Transport Layer 44h */
 #define UIC_TRANSPORT_LAYER_ERROR		UFS_BIT(31)
 #define UIC_TRANSPORT_LAYER_ERROR_CODE_MASK	0x7F
+#define UIC_TRANSPORT_UNSUPPORTED_HEADER_TYPE	BIT(0)
+#define UIC_TRANSPORT_UNKNOWN_CPORTID		BIT(1)
+#define UIC_TRANSPORT_NO_CONNECTION_RX		BIT(2)
+#define UIC_TRANSPORT_CONTROLLED_SEGMENT_DROPPING	BIT(3)
+#define UIC_TRANSPORT_BAD_TC			BIT(4)
+#define UIC_TRANSPORT_E2E_CREDIT_OVERFOW	BIT(5)
+#define UIC_TRANSPORT_SAFETY_VALUE_DROPPING	BIT(6)
 
 /* UECDME - Host UIC Error Code DME 48h */
 #define UIC_DME_ERROR			UFS_BIT(31)
@@ -225,6 +243,14 @@ enum link_status {
 	UFSHCD_LINK_IS_DOWN	= 1,
 	UFSHCD_LINK_IS_UP	= 2,
 };
+/*
+ * UFS Protector configuration
+ */
+#define UFS_DISK_ENC_MODE	(1 << 0)
+#define UFS_FILE_ENC_MODE	(1 << 1)
+
+#define UFSHCI_SECTOR_SIZE                      0x1000
+#define MIN_SECTOR_SIZE                         0x200
 
 /* UIC Commands */
 enum uic_cmd_dme {
@@ -323,6 +349,10 @@ enum {
 /* The granularity of the data byte count field in the PRDT is 32-bit */
 #define PRDT_DATA_BYTE_COUNT_PAD	4
 
+/* FMP bypass/encrypt mode */
+#define CLEAR           0
+#define AES_CBC         1
+#define AES_XTS         2
 /**
  * struct ufshcd_sg_entry - UFSHCI PRD Entry
  * @base_addr: Lower 32bit physical address DW-0
@@ -331,10 +361,74 @@ enum {
  * @size: size of physical segment DW-3
  */
 struct ufshcd_sg_entry {
-	__le32    base_addr;
-	__le32    upper_addr;
-	__le32    reserved;
-	__le32    size;
+	__le32 base_addr;	/* des0 */
+	__le32 upper_addr;	/* des1 */
+	__le32 reserved;	/* des2 */
+	__le32 size;		/* des3 */
+#ifdef CONFIG_EXYNOS_FMP
+	__le32 file_iv0;	/* des4 */
+	__le32 file_iv1;	/* des5 */
+	__le32 file_iv2;	/* des6 */
+	__le32 file_iv3;	/* des7 */
+	__le32 file_enckey0;	/* des8 */
+	__le32 file_enckey1;	/* des9 */
+	__le32 file_enckey2;	/* des10 */
+	__le32 file_enckey3;	/* des11 */
+	__le32 file_enckey4;	/* des12 */
+	__le32 file_enckey5;	/* des13 */
+	__le32 file_enckey6;	/* des14 */
+	__le32 file_enckey7;	/* des15 */
+	__le32 file_twkey0;	/* des16 */
+	__le32 file_twkey1;	/* des17 */
+	__le32 file_twkey2;	/* des18 */
+	__le32 file_twkey3;	/* des19 */
+	__le32 file_twkey4;	/* des20 */
+	__le32 file_twkey5;	/* des21 */
+	__le32 file_twkey6;	/* des22 */
+	__le32 file_twkey7;	/* des23 */
+	__le32 disk_iv0;	/* des24 */
+	__le32 disk_iv1;	/* des25 */
+	__le32 disk_iv2;	/* des26 */
+	__le32 disk_iv3;	/* des27 */
+	__le32 reserved0;	/* des28 */
+	__le32 reserved1;	/* des29 */
+	__le32 reserved2;	/* des30 */
+	__le32 reserved3;	/* des31 */
+#if defined(CONFIG_EXYNOS_FMP_DUAL_FILE_ENCRYPTION)
+	__le32 file2_enckey0;	/* des32 */
+	__le32 file2_enckey1;	/* des33 */
+	__le32 file2_enckey2;	/* des34 */
+	__le32 file2_enckey3;	/* des35 */
+	__le32 file2_enckey4;	/* des36 */
+	__le32 file2_enckey5;	/* des37 */
+	__le32 file2_enckey6;	/* des38 */
+	__le32 file2_enckey7;	/* des39 */
+	__le32 file2_twkey0;	/* des40 */
+	__le32 file2_twkey1;	/* des41 */
+	__le32 file2_twkey2;	/* des42 */
+	__le32 file2_twkey3;	/* des43 */
+	__le32 file2_twkey4;	/* des44 */
+	__le32 file2_twkey5;	/* des45 */
+	__le32 file2_twkey6;	/* des46 */
+	__le32 file2_twkey7;	/* des47 */
+	__le32 reserved4;	/* des48 */
+	__le32 reserved5;	/* des49 */
+	__le32 reserved6;	/* des50 */
+	__le32 reserved7;	/* des51 */
+	__le32 reserved8;	/* des52 */
+	__le32 reserved9;	/* des53 */
+	__le32 reserved10;	/* des54 */
+	__le32 reserved11;	/* des55 */
+	__le32 reserved12;	/* des56 */
+	__le32 reserved13;	/* des57 */
+	__le32 reserved14;	/* des58 */
+	__le32 reserved15;	/* des59 */
+	__le32 reserved16;	/* des60 */
+	__le32 reserved17;	/* des61 */
+	__le32 reserved18;	/* des62 */
+	__le32 reserved19;	/* des63 */
+#endif /* CONFIG_EXYNOS_FMP_DUAL_FILE_ENCRYPTION */
+#endif /* CONFIG_EXYNOS_FMP */
 };
 
 /**

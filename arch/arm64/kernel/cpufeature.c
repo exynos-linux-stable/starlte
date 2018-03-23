@@ -47,6 +47,7 @@ unsigned int compat_elf_hwcap2 __read_mostly;
 #endif
 
 DECLARE_BITMAP(cpu_hwcaps, ARM64_NCAPS);
+EXPORT_SYMBOL(cpu_hwcaps);
 
 DEFINE_STATIC_KEY_ARRAY_FALSE(cpu_hwcap_keys, ARM64_NCAPS);
 EXPORT_SYMBOL(cpu_hwcap_keys);
@@ -509,6 +510,15 @@ void update_cpu_features(int cpu,
 			 struct cpuinfo_arm64 *boot)
 {
 	int taint = 0;
+	/*
+	 * In Exynos SOC, the sanity check for customized cores is meaningless
+	 * because it consists of non-arm CPUs.
+	 */
+	u32 midr = read_cpuid_id();
+
+	if ((midr & MIDR_MODEL_MASK) == MIDR_MONGOOSE ||
+		((midr & MIDR_MODEL_MASK) == MIDR_MEERKAT))
+		return;
 
 	/*
 	 * The kernel can handle differing I-cache policies, but otherwise

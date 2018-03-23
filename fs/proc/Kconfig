@@ -81,3 +81,8 @@ config PROC_CHILDREN
 
 	  Say Y if you are running any user-space software which takes benefit from
 	  this interface. For example, rkt is such a piece of software.
+
+config PROC_STLOG
+	bool "Enable Storage log"
+	depends on PROC_FS
+	default y

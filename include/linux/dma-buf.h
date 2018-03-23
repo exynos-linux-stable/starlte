@@ -70,6 +70,8 @@ struct dma_buf_attachment;
  * @vmap: [optional] creates a virtual mapping for the buffer into kernel
  *	  address space. Same restrictions as for vmap and friends apply.
  * @vunmap: [optional] unmaps a vmap from the buffer
+ * @set_privflag: [optional] set the flags for buffer
+ * @get_privflag: [optional] get the flags and then clear (if parameter set)
  */
 struct dma_buf_ops {
 	int (*attach)(struct dma_buf *, struct device *,
@@ -104,6 +106,9 @@ struct dma_buf_ops {
 
 	void *(*vmap)(struct dma_buf *);
 	void (*vunmap)(struct dma_buf *, void *vaddr);
+
+	void (*set_privflag)(struct dma_buf *);
+	bool (*get_privflag)(struct dma_buf *, bool);
 };
 
 /**
@@ -242,4 +247,7 @@ int dma_buf_mmap(struct dma_buf *, struct vm_area_struct *,
 		 unsigned long);
 void *dma_buf_vmap(struct dma_buf *);
 void dma_buf_vunmap(struct dma_buf *, void *vaddr);
+void dma_buf_set_privflag(struct dma_buf *);
+bool dma_buf_get_privflag(struct dma_buf *, bool clear);
+struct dma_buf *get_dma_buf_file(struct file *);
 #endif /* __DMA_BUF_H__ */

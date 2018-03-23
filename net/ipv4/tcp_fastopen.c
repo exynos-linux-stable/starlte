@@ -8,6 +8,9 @@
 #include <linux/rculist.h>
 #include <net/inetpeer.h>
 #include <net/tcp.h>
+#ifdef CONFIG_MPTCP
+	#include <net/mptcp.h>
+#endif
 
 int sysctl_tcp_fastopen __read_mostly = TFO_CLIENT_ENABLE;
 
@@ -177,6 +180,9 @@ static struct sock *tcp_fastopen_create_child(struct sock *sk,
 	struct tcp_sock *tp;
 	struct request_sock_queue *queue = &inet_csk(sk)->icsk_accept_queue;
 	struct sock *child;
+#ifdef CONFIG_MPTCP
+	struct sock *meta_sk;
+#endif
 	bool own_req;
 
 	req->num_retrans = 0;
@@ -216,12 +222,14 @@ static struct sock *tcp_fastopen_create_child(struct sock *sk,
 
 	atomic_set(&req->rsk_refcnt, 2);
 
+#ifndef CONFIG_MPTCP
 	/* Now finish processing the fastopen child socket. */
 	inet_csk(child)->icsk_af_ops->rebuild_header(child);
 	tcp_init_congestion_control(child);
 	tcp_mtup_init(child);
 	tcp_init_metrics(child);
 	tcp_init_buffer_space(child);
+#endif
 
 	tp->rcv_nxt = TCP_SKB_CB(skb)->seq + 1;
 
@@ -229,6 +237,21 @@ static struct sock *tcp_fastopen_create_child(struct sock *sk,
 
 	tcp_rsk(req)->rcv_nxt = tp->rcv_nxt;
 	tp->rcv_wup = tp->rcv_nxt;
+
+#ifdef CONFIG_MPTCP
+	meta_sk = child;
+	if (!mptcp_check_req_fastopen(meta_sk, req)) {
+		child = tcp_sk(meta_sk)->mpcb->master_sk;
+		tp = tcp_sk(child);
+	}
+
+	/* Now finish processing the fastopen child socket. */
+	inet_csk(child)->icsk_af_ops->rebuild_header(child);
+	tcp_init_congestion_control(child);
+	tcp_mtup_init(child);
+	tcp_init_metrics(child);
+	tp->ops->init_buffer_space(child);
+#endif
 	/* tcp_conn_request() is sending the SYNACK,
 	 * and queues the child into listener accept queue.
 	 */

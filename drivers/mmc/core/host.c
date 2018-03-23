@@ -31,8 +31,6 @@
 #include "slot-gpio.h"
 #include "pwrseq.h"
 
-#define cls_dev_to_mmc_host(d)	container_of(d, struct mmc_host, class_dev)
-
 static DEFINE_IDA(mmc_host_ida);
 static DEFINE_SPINLOCK(mmc_host_lock);
 
@@ -319,6 +317,8 @@ int mmc_of_parse(struct mmc_host *host)
 		host->caps2 |= MMC_CAP2_NO_SD;
 	if (device_property_read_bool(dev, "no-mmc"))
 		host->caps2 |= MMC_CAP2_NO_MMC;
+	if (device_property_read_bool(dev, "skip-init-mmc-scan"))
+		host->caps2 |= MMC_CAP2_SKIP_INIT_SCAN;
 
 	host->dsr_req = !device_property_read_u32(dev, "dsr", &host->dsr);
 	if (host->dsr_req && (host->dsr & ~0xffff)) {
@@ -384,6 +384,10 @@ again:
 
 	spin_lock_init(&host->lock);
 	init_waitqueue_head(&host->wq);
+	host->wlock_name = kasprintf(GFP_KERNEL,
+			"%s_detect", mmc_hostname(host));
+	wake_lock_init(&host->detect_wake_lock, WAKE_LOCK_SUSPEND,
+			host->wlock_name);
 	INIT_DELAYED_WORK(&host->detect, mmc_rescan);
 	setup_timer(&host->retune_timer, mmc_retune_timer, (unsigned long)host);
 
@@ -428,8 +432,13 @@ int mmc_add_host(struct mmc_host *host)
 	mmc_add_host_debugfs(host);
 #endif
 
+#ifdef CONFIG_BLOCK
+	mmc_latency_hist_sysfs_init(host);
+#endif
+
 	mmc_start_host(host);
-	mmc_register_pm_notifier(host);
+	if (!(host->pm_flags & MMC_PM_IGNORE_PM_NOTIFY))
+		mmc_register_pm_notifier(host);
 
 	return 0;
 }
@@ -446,11 +455,16 @@ EXPORT_SYMBOL(mmc_add_host);
  */
 void mmc_remove_host(struct mmc_host *host)
 {
-	mmc_unregister_pm_notifier(host);
+	if (!(host->pm_flags & MMC_PM_IGNORE_PM_NOTIFY))
+		mmc_unregister_pm_notifier(host);
 	mmc_stop_host(host);
 
 #ifdef CONFIG_DEBUG_FS
 	mmc_remove_host_debugfs(host);
+#endif
+
+#ifdef CONFIG_BLOCK
+	mmc_latency_hist_sysfs_exit(host);
 #endif
 
 	device_del(&host->class_dev);
@@ -469,6 +483,7 @@ EXPORT_SYMBOL(mmc_remove_host);
 void mmc_free_host(struct mmc_host *host)
 {
 	mmc_pwrseq_free(host);
+	wake_lock_destroy(&host->detect_wake_lock);
 	put_device(&host->class_dev);
 }
 

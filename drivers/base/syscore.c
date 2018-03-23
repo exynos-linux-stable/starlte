@@ -11,6 +11,8 @@
 #include <linux/module.h>
 #include <linux/suspend.h>
 #include <trace/events/power.h>
+#include <linux/wakeup_reason.h>
+#include <linux/exynos-ss.h>
 
 static LIST_HEAD(syscore_ops_list);
 static DEFINE_MUTEX(syscore_ops_lock);
@@ -49,13 +51,19 @@ int syscore_suspend(void)
 {
 	struct syscore_ops *ops;
 	int ret = 0;
+	char suspend_abort[MAX_SUSPEND_ABORT_LEN];
 
 	trace_suspend_resume(TPS("syscore_suspend"), 0, true);
 	pr_debug("Checking wakeup interrupts\n");
 
 	/* Return error code if there are any wakeup interrupts pending. */
-	if (pm_wakeup_pending())
+	if (pm_wakeup_pending()) {
+		pm_get_active_wakeup_sources(suspend_abort,
+				MAX_SUSPEND_ABORT_LEN);
+		log_suspend_abort_reason(suspend_abort);
+		pr_err("PM: System core suspend abort: %s\n", suspend_abort);
 		return -EBUSY;
+	}
 
 	WARN_ONCE(!irqs_disabled(),
 		"Interrupts enabled before system core suspend.\n");
@@ -64,7 +72,9 @@ int syscore_suspend(void)
 		if (ops->suspend) {
 			if (initcall_debug)
 				pr_info("PM: Calling %pF\n", ops->suspend);
+			exynos_ss_suspend(ops->suspend, NULL, ESS_FLAG_IN);
 			ret = ops->suspend();
+			exynos_ss_suspend(ops->suspend, NULL, ESS_FLAG_OUT);
 			if (ret)
 				goto err_out;
 			WARN_ONCE(!irqs_disabled(),
@@ -75,6 +85,8 @@ int syscore_suspend(void)
 	return 0;
 
  err_out:
+	log_suspend_abort_reason("System core suspend callback %pF failed",
+		ops->suspend);
 	pr_err("PM: System core suspend callback %pF failed.\n", ops->suspend);
 
 	list_for_each_entry_continue(ops, &syscore_ops_list, node)
@@ -102,7 +114,9 @@ void syscore_resume(void)
 		if (ops->resume) {
 			if (initcall_debug)
 				pr_info("PM: Calling %pF\n", ops->resume);
+			exynos_ss_suspend(ops->resume, NULL, ESS_FLAG_IN);
 			ops->resume();
+			exynos_ss_suspend(ops->resume, NULL, ESS_FLAG_OUT);
 			WARN_ONCE(!irqs_disabled(),
 				"Interrupts enabled after %pF\n", ops->resume);
 		}

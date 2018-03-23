@@ -25,6 +25,7 @@
 #include <linux/anon_inodes.h>
 #include <linux/sync_file.h>
 #include <uapi/linux/sync_file.h>
+#include "sync_debug.h"
 
 static const struct file_operations sync_file_fops;
 
@@ -67,9 +68,10 @@ static void fence_check_cb_func(struct fence *f, struct fence_cb *cb)
  * sync_file_create() - creates a sync file
  * @fence:	fence to add to the sync_fence
  *
- * Creates a sync_file containg @fence. Once this is called, the sync_file
- * takes ownership of @fence. The sync_file can be released with
- * fput(sync_file->file). Returns the sync_file or NULL in case of error.
+ * Creates a sync_file containg @fence. This function acquires and additional
+ * reference of @fence for the newly-created &sync_file, if it succeeds. The
+ * sync_file can be released with fput(sync_file->file). Returns the
+ * sync_file or NULL in case of error.
  */
 struct sync_file *sync_file_create(struct fence *fence)
 {
@@ -79,12 +81,15 @@ struct sync_file *sync_file_create(struct fence *fence)
 	if (!sync_file)
 		return NULL;
 
-	sync_file->fence = fence;
+	sync_file->fence = fence_get(fence);
 
 	snprintf(sync_file->name, sizeof(sync_file->name), "%s-%s%llu-%d",
 		 fence->ops->get_driver_name(fence),
 		 fence->ops->get_timeline_name(fence), fence->context,
 		 fence->seqno);
+
+	fence_add_callback(fence, &sync_file->cb, fence_check_cb_func);
+	sync_file_debug_add(sync_file);
 
 	return sync_file;
 }
@@ -97,7 +102,7 @@ EXPORT_SYMBOL(sync_file_create);
  * Ensures @fd references a valid sync_file, increments the refcount of the
  * backing file. Returns the sync_file or NULL in case of error.
  */
-static struct sync_file *sync_file_fdget(int fd)
+struct sync_file *sync_file_fdget(int fd)
 {
 	struct file *file = fget(fd);
 
@@ -113,6 +118,7 @@ err:
 	fput(file);
 	return NULL;
 }
+EXPORT_SYMBOL(sync_file_fdget);
 
 /**
  * sync_file_get_fence - get the fence related to the sync_file fd
@@ -271,7 +277,11 @@ static struct sync_file *sync_file_merge(const char *name, struct sync_file *a,
 		goto err;
 	}
 
+	fence_add_callback(sync_file->fence, &sync_file->cb,
+			   fence_check_cb_func);
+
 	strlcpy(sync_file->name, name, sizeof(sync_file->name));
+	sync_file_debug_add(sync_file);
 	return sync_file;
 
 err:
@@ -285,8 +295,9 @@ static void sync_file_free(struct kref *kref)
 	struct sync_file *sync_file = container_of(kref, struct sync_file,
 						     kref);
 
-	if (test_bit(POLL_ENABLED, &sync_file->fence->flags))
-		fence_remove_callback(sync_file->fence, &sync_file->cb);
+	sync_file_debug_remove(sync_file);
+
+	fence_remove_callback(sync_file->fence, &sync_file->cb);
 	fence_put(sync_file->fence);
 	kfree(sync_file);
 }
@@ -302,18 +313,69 @@ static int sync_file_release(struct inode *inode, struct file *file)
 static unsigned int sync_file_poll(struct file *file, poll_table *wait)
 {
 	struct sync_file *sync_file = file->private_data;
+	int status;
 
 	poll_wait(file, &sync_file->wq, wait);
 
-	if (!poll_does_not_wait(wait) &&
-	    !test_and_set_bit(POLL_ENABLED, &sync_file->fence->flags)) {
-		if (fence_add_callback(sync_file->fence, &sync_file->cb,
-				       fence_check_cb_func) < 0)
-			wake_up_all(&sync_file->wq);
+	status = fence_is_signaled(sync_file->fence);
+
+	if (status)
+		return POLLIN;
+	return 0;
+}
+
+#ifdef CONFIG_MALI_SEC_JOB_STATUS_CHECK
+extern int gpu_job_fence_status_dump(struct sync_file *timeout_sync_file);
+#endif
+int sync_file_wait(struct sync_file *sync_file, long timeout)
+{
+	long ret;
+	bool signaled;
+
+	if (timeout < 0)
+		timeout = MAX_SCHEDULE_TIMEOUT;
+	else
+		timeout = msecs_to_jiffies(timeout);
+
+	ret = wait_event_interruptible_timeout(sync_file->wq,
+			fence_is_signaled(sync_file->fence), timeout);
+
+	if (ret < 0) {
+		return ret;
+	} else if (ret == 0) {
+		if (timeout) {
+#if defined(CONFIG_SAMSUNG_PRODUCT_SHIP)
+			pr_info("fence timeout on [%pK] after %dms\n", sync_file,
+					jiffies_to_msecs(timeout));
+#else
+			pr_info("fence timeout on [%p] after %dms\n", sync_file,
+					jiffies_to_msecs(timeout));
+#endif
+#ifdef CONFIG_MALI_SEC_JOB_STATUS_CHECK
+			gpu_job_fence_status_dump(sync_file);
+#endif
+			sync_dump();
+		}
+		return -ETIME;
 	}
 
-	return fence_is_signaled(sync_file->fence) ? POLLIN : 0;
+	signaled = fence_is_signaled(sync_file->fence);
+	if (!signaled) {
+#if defined(CONFIG_SAMSUNG_PRODUCT_SHIP)
+		pr_info("fence error %d on [%pK]\n", signaled, sync_file);
+#else
+		pr_info("fence error %d on [%p]\n", signaled, sync_file);
+#endif
+#ifdef CONFIG_MALI_SEC_JOB_STATUS_CHECK
+		gpu_job_fence_status_dump(sync_file);
+#endif
+		sync_dump();
+		return -EINVAL;
+	}
+
+	return 0;
 }
+EXPORT_SYMBOL(sync_file_wait);
 
 static long sync_file_ioctl_merge(struct sync_file *sync_file,
 				  unsigned long arg)
@@ -390,7 +452,7 @@ static long sync_file_ioctl_fence_info(struct sync_file *sync_file,
 	struct sync_file_info info;
 	struct sync_fence_info *fence_info = NULL;
 	struct fence **fences;
-	__u32 size;
+	__u64 size;
 	int num_fences, ret, i;
 
 	if (copy_from_user(&info, (void __user *)arg, sizeof(info)))
@@ -443,6 +505,20 @@ out:
 	return ret;
 }
 
+static long sync_fence_ioctl_set_name(struct sync_file *sync_file,
+		unsigned long arg)
+{
+	int ret = 0;
+
+	if (sync_file != NULL) {
+		if (copy_from_user(sync_file->name + HWC_FENCE_NAME_START, (char *)arg, HWC_FENCE_NAME_LEN)) {
+			return -EFAULT;
+		}
+	}
+
+	return ret;
+}
+
 static long sync_file_ioctl(struct file *file, unsigned int cmd,
 			    unsigned long arg)
 {
@@ -454,6 +530,9 @@ static long sync_file_ioctl(struct file *file, unsigned int cmd,
 
 	case SYNC_IOC_FILE_INFO:
 		return sync_file_ioctl_fence_info(sync_file, arg);
+
+	case SYNC_IOC_FENCE_NAME:
+		return sync_fence_ioctl_set_name(sync_file, arg);
 
 	default:
 		return -ENOTTY;

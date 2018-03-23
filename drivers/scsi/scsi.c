@@ -686,6 +686,7 @@ static int scsi_vpd_inquiry(struct scsi_device *sdev, unsigned char *buffer,
 							u8 page, unsigned len)
 {
 	int result;
+	unsigned int timeout;
 	unsigned char cmd[16];
 
 	if (len < 4)
@@ -702,8 +703,13 @@ static int scsi_vpd_inquiry(struct scsi_device *sdev, unsigned char *buffer,
 	 * I'm not convinced we need to try quite this hard to get VPD, but
 	 * all the existing users tried this hard.
 	 */
+	if (sdev->host->by_ufs)
+		timeout = 10;
+	else
+		timeout = 30;
+
 	result = scsi_execute_req(sdev, cmd, DMA_FROM_DEVICE, buffer,
-				  len, NULL, 30 * HZ, 3, NULL);
+				  len, NULL, timeout * HZ, 3, NULL);
 	if (result)
 		return -EIO;
 

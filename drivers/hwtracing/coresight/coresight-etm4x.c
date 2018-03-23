@@ -63,6 +63,7 @@ static bool etm4_arch_supported(u8 arch)
 {
 	switch (arch) {
 	case ETM_ARCH_V4:
+	case ETM_ARCH_V4_2:
 		break;
 	default:
 		return false;
@@ -180,8 +181,6 @@ static void etm4_enable_hw(void *info)
 	if (coresight_timeout(drvdata->base, TRCSTATR, TRCSTATR_IDLE_BIT, 0))
 		dev_err(drvdata->dev,
 			"timeout while waiting for Idle Trace Status\n");
-
-	CS_LOCK(drvdata->base);
 
 	dev_dbg(drvdata->dev, "cpu: %d enable smp call done\n", drvdata->cpu);
 }
@@ -326,8 +325,6 @@ static void etm4_disable_hw(void *info)
 	mb();
 	isb();
 	writel_relaxed(control, drvdata->base + TRCPRGCTLR);
-
-	CS_LOCK(drvdata->base);
 
 	dev_dbg(drvdata->dev, "cpu: %d disable smp call done\n", drvdata->cpu);
 }
@@ -582,7 +579,6 @@ static void etm4_init_arch_data(void *info)
 	drvdata->nrseqstate = BMVAL(etmidr5, 25, 27);
 	/* NUMCNTR, bits[30:28] number of counters available for tracing */
 	drvdata->nr_cntr = BMVAL(etmidr5, 28, 30);
-	CS_LOCK(drvdata->base);
 }
 
 static void etm4_set_default_config(struct etmv4_config *config)
@@ -1057,6 +1053,21 @@ static struct amba_id etm4_ids[] = {
 	},
 	{       /* ETM 4.0 - A72, Maia, HiSilicon */
 		.id = 0x000bb95a,
+		.mask = 0x000fffff,
+		.data = "ETM 4.0",
+	},
+	{       /* ETM 4.0 - Cortex-A73 */
+		.id = 0x000bb959,
+		.mask = 0x000fffff,
+		.data = "ETM 4.0",
+	},
+	{       /* ETM 4.2 - Cortex-A55 */
+		.id = 0x000bbd05,
+		.mask = 0x000fffff,
+		.data = "ETM 4.2",
+	},
+	{       /* ETM 4.0 - Meerkat */
+		.id = 0x000ce002,
 		.mask = 0x000fffff,
 		.data = "ETM 4.0",
 	},

@@ -275,7 +275,6 @@ TRACE_MAKE_SYSTEM_STR();
 		trace_print_flags_seq(p, delim, flag, __flags);	\
 	})
 
-#undef __print_symbolic
 #define __print_symbolic(value, symbol_array...)			\
 	({								\
 		static const struct trace_print_flags symbols[] =	\
@@ -709,7 +708,6 @@ static inline void ftrace_test_probe_##call(void)			\
 #define __entry REC
 
 #undef __print_flags
-#undef __print_symbolic
 #undef __print_hex
 #undef __get_dynamic_array
 #undef __get_dynamic_array_len

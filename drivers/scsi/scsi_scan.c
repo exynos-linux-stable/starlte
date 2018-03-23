@@ -286,6 +286,13 @@ static struct scsi_device *scsi_alloc_sdev(struct scsi_target *starget,
 	scsi_change_queue_depth(sdev, sdev->host->cmd_per_lun ?
 					sdev->host->cmd_per_lun : 1);
 
+#ifdef CONFIG_JOURNAL_DATA_TAG
+	if (shost->journal_tag == JOURNAL_TAG_ON)
+		queue_flag_set_unlocked(QUEUE_FLAG_JOURNAL_TAG, sdev->request_queue);
+	else
+		queue_flag_clear_unlocked(QUEUE_FLAG_JOURNAL_TAG, sdev->request_queue);
+#endif
+
 	scsi_sysfs_device_initialize(sdev);
 
 	if (shost->hostt->slave_alloc) {
@@ -570,6 +577,7 @@ static int scsi_probe_lun(struct scsi_device *sdev, unsigned char *inq_result,
 	int first_inquiry_len, try_inquiry_len, next_inquiry_len;
 	int response_len = 0;
 	int pass, count, result;
+	unsigned int timeout;
 	struct scsi_sense_hdr sshdr;
 
 	*bflags = 0;
@@ -586,6 +594,11 @@ static int scsi_probe_lun(struct scsi_device *sdev, unsigned char *inq_result,
 				"scsi scan: INQUIRY pass %d length %d\n",
 				pass, try_inquiry_len));
 
+	if (sdev->host->by_ufs)
+		timeout = 10;
+	else
+		timeout = scsi_inq_timeout;
+
 	/* Each pass gets up to three chances to ignore Unit Attention */
 	for (count = 0; count < 3; ++count) {
 		int resid;
@@ -598,7 +611,7 @@ static int scsi_probe_lun(struct scsi_device *sdev, unsigned char *inq_result,
 
 		result = scsi_execute_req(sdev,  scsi_cmd, DMA_FROM_DEVICE,
 					  inq_result, try_inquiry_len, &sshdr,
-					  HZ / 2 + HZ * scsi_inq_timeout, 3,
+					  HZ / 2 + HZ * timeout, 3,
 					  &resid);
 
 		SCSI_LOG_SCAN_BUS(3, sdev_printk(KERN_INFO, sdev,

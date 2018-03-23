@@ -766,6 +766,40 @@ config PANEL_BOOT_MESSAGE
 	  An empty message will only clear the display at driver init time. Any other
 	  printf()-formatted message is valid with newline and escape codes.
 
+config UID_SYS_STATS
+	bool "Per-UID statistics"
+	depends on PROFILING && TASK_XACCT && TASK_IO_ACCOUNTING
+	help
+	  Per UID based cpu time statistics exported to /proc/uid_cputime
+	  Per UID based io statistics exported to /proc/uid_io
+	  Per UID based procstat control in /proc/uid_procstat
+
+config UID_SYS_STATS_DEBUG
+	bool "Per-TASK statistics"
+	depends on UID_SYS_STATS
+	default n
+	help
+	  Per TASK based io statistics exported to /proc/uid_io
+
+config MEMORY_STATE_TIME
+	tristate "Memory freq/bandwidth time statistics"
+	depends on PROFILING
+	help
+	  Memory time statistics exported to /sys/kernel/memory_state_time
+
+config TIMA_LOG
+	tristate "Support for dumping TIMA log"
+	depends on TIMA
+	default y
+	help
+	  This option enables support for dumping TIMA log.
+
+config KNOX_KAP
+	bool "Enable KNOX KAP mode"
+	default n
+	help
+	  Knox Active Protection mode
+
 source "drivers/misc/c2port/Kconfig"
 source "drivers/misc/eeprom/Kconfig"
 source "drivers/misc/cb710/Kconfig"
@@ -778,4 +812,9 @@ source "drivers/misc/mic/Kconfig"
 source "drivers/misc/genwqe/Kconfig"
 source "drivers/misc/echo/Kconfig"
 source "drivers/misc/cxl/Kconfig"
+source "drivers/misc/mcu_ipc/Kconfig"
+source "drivers/misc/modem_v1/Kconfig"
+source "drivers/misc/modem_if/Kconfig"
+source "drivers/misc/dev_ril_bridge/Kconfig"
+source "drivers/misc/five_tee_driver/Kconfig"
 endmenu

@@ -128,6 +128,7 @@
 #define PA_PACPREQEOBTIMEOUT	0x1591
 #define PA_HIBERN8TIME		0x15A7
 #define PA_LOCALVERINFO		0x15A9
+#define PA_GRANULARITY		0x15AA
 #define PA_TACTIVATE		0x15A8
 #define PA_PACPFRAMECOUNT	0x15C0
 #define PA_PACPERRORCOUNT	0x15C1
@@ -173,6 +174,9 @@ enum {
 	SLOWAUTO_MODE	= 5,
 	UNCHANGED	= 7,
 };
+
+#define IS_PWR_MODE_HS(m)        (((m) == FAST_MODE) || ((m) == FASTAUTO_MODE))
+#define IS_PWR_MODE_PWM(m)       (((m) == SLOW_MODE) || ((m) == SLOWAUTO_MODE))
 
 /* PA TX/RX Frequency Series */
 enum {
@@ -235,6 +239,11 @@ enum ufs_unipro_ver {
 #define DL_PEERTC1PRESENT	0x2066
 #define DL_PEERTC1RXINITCREVAL	0x2067
 
+/* Default value of L2 Timer */
+#define FC0PROTTIMEOUTVAL	8191
+#define TC0REPLAYTIMEOUTVAL	65535
+#define AFC0REQTIMEOUTVAL	32767
+
 /*
  * Network Layer Attributes
  */
@@ -270,6 +279,21 @@ enum ufs_unipro_ver {
 #ifdef TRUE
 #undef TRUE
 #endif
+
+/* CPort setting */
+#define E2EFC_ON	(1 << 0)
+#define E2EFC_OFF	(0 << 0)
+#define CSD_N_ON	(0 << 1)
+#define CSD_N_OFF	(1 << 1)
+#define CSV_N_ON	(0 << 2)
+#define CSV_N_OFF	(1 << 2)
+#define CPORT_DEF_FLAGS	(CSV_N_OFF | CSD_N_OFF | E2EFC_OFF)
+
+/* CPort connection state */
+enum {
+	CPORT_IDLE = 0,
+	CPORT_CONNECTED,
+};
 
 /* Boolean attribute values */
 enum {

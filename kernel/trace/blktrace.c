@@ -1777,6 +1777,8 @@ void blk_dump_cmd(char *buf, struct request *rq)
 	}
 }
 
+SIO_PATCH_VERSION(ftrace_discard_bugfix, 1, 0, "");
+
 void blk_fill_rwbs(char *rwbs, int op, u32 rw, int bytes)
 {
 	int i = 0;
@@ -1785,12 +1787,12 @@ void blk_fill_rwbs(char *rwbs, int op, u32 rw, int bytes)
 		rwbs[i++] = 'F';
 
 	switch (op) {
+	case REQ_OP_DISCARD:
+		rwbs[i++] = 'D';
+		break;
 	case REQ_OP_WRITE:
 	case REQ_OP_WRITE_SAME:
 		rwbs[i++] = 'W';
-		break;
-	case REQ_OP_DISCARD:
-		rwbs[i++] = 'D';
 		break;
 	case REQ_OP_SECURE_ERASE:
 		rwbs[i++] = 'D';

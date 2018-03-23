@@ -198,9 +198,16 @@ pmd_t * __meminit vmemmap_pmd_populate(pud_t *pud, unsigned long addr, int node)
 
 pud_t * __meminit vmemmap_pud_populate(pgd_t *pgd, unsigned long addr, int node)
 {
+#ifdef CONFIG_UH_RKP
+	void *p = NULL;
+#endif
 	pud_t *pud = pud_offset(pgd, addr);
 	if (pud_none(*pud)) {
+#ifdef CONFIG_UH_RKP
+		p = rkp_ro_alloc();
+#else
 		void *p = vmemmap_alloc_block(PAGE_SIZE, node);
+#endif
 		if (!p)
 			return NULL;
 		pud_populate(&init_mm, pud, p);

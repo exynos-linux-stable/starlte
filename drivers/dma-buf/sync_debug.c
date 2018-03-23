@@ -137,6 +137,13 @@ static void sync_print_sync_file(struct seq_file *s,
 	seq_printf(s, "[%p] %s: %s\n", sync_file, sync_file->name,
 		   sync_status_str(!fence_is_signaled(sync_file->fence)));
 
+	if ((sync_file->name[HWC_FENCE_NAME_START] == '_') &&
+		(sync_file->name[sizeof(sync_file->name) - 2] == 'h') &&
+		(sync_file->name[sizeof(sync_file->name) - 1] == '\0')) {
+		seq_printf(s, "hwc fence type: %s\n",
+				sync_file->name + HWC_FENCE_NAME_START + 1);
+	}
+
 	if (fence_is_array(sync_file->fence)) {
 		struct fence_array *array = to_fence_array(sync_file->fence);
 

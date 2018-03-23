@@ -17,6 +17,7 @@
 #include <linux/module.h>
 #include <linux/smp.h>
 #include <linux/device.h>
+#include <linux/exynos-ss.h>
 
 #include "tick-internal.h"
 
@@ -253,6 +254,7 @@ static int clockevents_program_min_delta(struct clock_event_device *dev)
 
 		dev->retries++;
 		clc = ((unsigned long long) delta * dev->mult) >> dev->shift;
+		exynos_ss_clockevent(clc, delta, &dev->next_event);
 		if (dev->set_next_event((unsigned long) clc, dev) == 0)
 			return 0;
 
@@ -290,6 +292,7 @@ static int clockevents_program_min_delta(struct clock_event_device *dev)
 
 	dev->retries++;
 	clc = ((unsigned long long) delta * dev->mult) >> dev->shift;
+	exynos_ss_clockevent(clc, delta, &dev->next_event);
 	return dev->set_next_event((unsigned long) clc, dev);
 }
 
@@ -336,6 +339,7 @@ int clockevents_program_event(struct clock_event_device *dev, ktime_t expires,
 	delta = max(delta, (int64_t) dev->min_delta_ns);
 
 	clc = ((unsigned long long) delta * dev->mult) >> dev->shift;
+	exynos_ss_clockevent(clc, delta, &dev->next_event);
 	rc = dev->set_next_event((unsigned long) clc, dev);
 
 	return (rc && force) ? clockevents_program_min_delta(dev) : rc;

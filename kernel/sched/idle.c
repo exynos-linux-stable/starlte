@@ -9,6 +9,7 @@
 #include <linux/mm.h>
 #include <linux/stackprotector.h>
 #include <linux/suspend.h>
+#include <linux/cpu_pm.h>
 
 #include <asm/tlb.h>
 
@@ -23,9 +24,10 @@ extern char __cpuidle_text_start[], __cpuidle_text_end[];
  * sched_idle_set_state - Record idle state for the current CPU.
  * @idle_state: State to record.
  */
-void sched_idle_set_state(struct cpuidle_state *idle_state)
+void sched_idle_set_state(struct cpuidle_state *idle_state, int index)
 {
 	idle_set_state(this_rq(), idle_state);
+	idle_set_state_idx(this_rq(), index);
 }
 
 static int __read_mostly cpu_idle_force_poll;
@@ -217,6 +219,7 @@ static void cpu_idle_loop(void)
 		 */
 
 		__current_set_polling();
+		cpu_pm_enter_pre();
 		quiet_vmstat();
 		tick_nohz_idle_enter();
 
@@ -257,6 +260,7 @@ static void cpu_idle_loop(void)
 		 * This is required because for polling idle loops we will
 		 * not have had an IPI to fold the state for us.
 		 */
+		cpu_pm_exit_post();
 		preempt_set_need_resched();
 		tick_nohz_idle_exit();
 		__current_clr_polling();

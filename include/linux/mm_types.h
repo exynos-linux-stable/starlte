@@ -42,6 +42,32 @@ struct mem_cgroup;
  * allows the use of atomic double word operations on the flags/mapping
  * and lru list pointers also.
  */
+
+#ifdef CONFIG_PTRACK_DEBUG
+#define PTRACK_ADDRS_COUNT 16
+#define MEMBLOCK_NUM 5
+struct ptrack {
+	unsigned long addr;	/* Called from address */
+#ifdef CONFIG_STACKTRACE
+	unsigned long addrs[PTRACK_ADDRS_COUNT];	/* Called from address */
+#endif
+	int cpu;		/* Was running on cpu */
+	int pid;		/* Pid context */
+	u64 when;		/* When did the operation occur */
+};
+
+struct ptrack_info {
+	unsigned long memblockcnt;
+	struct ptrack **tables[MEMBLOCK_NUM];
+	unsigned long tables_size[MEMBLOCK_NUM];
+};
+
+enum ptrack_item {
+	PTRACK_ALLOC = 0,
+	PTRACK_FREE,
+	PTRACK_ITEM_NUM};
+#endif
+
 struct page {
 	/* First double word block */
 	unsigned long flags;		/* Atomic flags, some possibly
@@ -221,6 +247,10 @@ struct page {
 #ifdef LAST_CPUPID_NOT_IN_PAGE_FLAGS
 	int _last_cpupid;
 #endif
+
+#ifdef CONFIG_PTRACK_DEBUG
+	struct ptrack *ptrack;
+#endif
 }
 /*
  * The struct page can be forced to be double word aligned so that atomic ops
@@ -326,11 +356,18 @@ struct vm_area_struct {
 	/*
 	 * For areas with an address space and backing store,
 	 * linkage into the address_space->i_mmap interval tree.
+	 *
+	 * For private anonymous mappings, a pointer to a null terminated string
+	 * in the user process containing the name given to the vma, or NULL
+	 * if unnamed.
 	 */
-	struct {
-		struct rb_node rb;
-		unsigned long rb_subtree_last;
-	} shared;
+	union {
+		struct {
+			struct rb_node rb;
+			unsigned long rb_subtree_last;
+		} shared;
+		const char __user *anon_name;
+	};
 
 	/*
 	 * A file's MAP_PRIVATE vma can be in both i_mmap tree and anon_vma
@@ -619,5 +656,14 @@ enum tlb_flush_reason {
 typedef struct {
 	unsigned long val;
 } swp_entry_t;
+
+/* Return the name for an anonymous mapping or NULL for a file-backed mapping */
+static inline const char __user *vma_get_anon_name(struct vm_area_struct *vma)
+{
+	if (vma->vm_file)
+		return NULL;
+
+	return vma->anon_name;
+}
 
 #endif /* _LINUX_MM_TYPES_H */

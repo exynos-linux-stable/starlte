@@ -24,6 +24,7 @@
 
 union ion_ioctl_arg {
 	struct ion_fd_data fd;
+	struct ion_fd_partial_data fd_partial;
 	struct ion_allocation_data allocation;
 	struct ion_handle_data handle;
 	struct ion_custom_data custom;
@@ -52,6 +53,7 @@ static unsigned int ion_ioctl_dir(unsigned int cmd)
 {
 	switch (cmd) {
 	case ION_IOC_SYNC:
+	case ION_IOC_SYNC_PARTIAL:
 	case ION_IOC_FREE:
 	case ION_IOC_CUSTOM:
 		return _IOC_WRITE;
@@ -98,8 +100,14 @@ long ion_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 						data.allocation.align,
 						data.allocation.heap_id_mask,
 						data.allocation.flags);
-		if (IS_ERR(handle))
+		if (IS_ERR(handle)) {
+			pr_err("%s: len %zu align %zu heap_id_mask %u flags %x (ret %ld)\n",
+				__func__, data.allocation.len,
+				data.allocation.align,
+				data.allocation.heap_id_mask,
+				data.allocation.flags, PTR_ERR(handle));
 			return PTR_ERR(handle);
+		}
 
 		data.allocation.handle = handle->id;
 
@@ -130,7 +138,7 @@ long ion_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 		if (IS_ERR(handle))
 			return PTR_ERR(handle);
 		data.fd.fd = ion_share_dma_buf_fd(client, handle);
-		ion_handle_put(handle);
+		ion_handle_put(client, handle);
 		if (data.fd.fd < 0)
 			ret = data.fd.fd;
 		break;
@@ -149,6 +157,12 @@ long ion_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 	case ION_IOC_SYNC:
 	{
 		ret = ion_sync_for_device(client, data.fd.fd);
+		break;
+	}
+	case ION_IOC_SYNC_PARTIAL:
+	{
+		ret = ion_sync_partial_for_device(client, data.fd_partial.fd,
+			data.fd_partial.offset, data.fd_partial.len);
 		break;
 	}
 	case ION_IOC_CUSTOM:

@@ -25,6 +25,10 @@
 #include <linux/percpu-refcount.h>
 #include <linux/scatterlist.h>
 
+#ifdef CONFIG_MMC_SRPMB
+#include <linux/mmc/ioctl.h>
+#endif
+
 struct module;
 struct scsi_ioctl_command;
 
@@ -39,7 +43,11 @@ struct blk_flush_queue;
 struct pr_ops;
 
 #define BLKDEV_MIN_RQ	4
-#define BLKDEV_MAX_RQ	128	/* Default maximum */
+#ifdef CONFIG_LARGE_DIRTY_BUFFER
+#define BLKDEV_MAX_RQ	256
+#else
+#define BLKDEV_MAX_RQ  128     /* Default maximum */
+#endif
 
 /*
  * Maximum number of blkcg policies allowed to be registered concurrently.
@@ -196,6 +204,9 @@ struct request {
 
 	/* for bidi */
 	struct request *next_rq;
+
+	ktime_t			lat_hist_io_start;
+	int			lat_hist_enabled;
 };
 
 #define REQ_OP_SHIFT (8 * sizeof(u64) - REQ_OP_BITS)
@@ -412,6 +423,8 @@ struct request_queue {
 
 	unsigned int		nr_sorted;
 	unsigned int		in_flight[2];
+	unsigned long long	in_flight_time;
+	ktime_t			in_flight_stamp;
 	/*
 	 * Number of active block driver functions for which blk_drain_queue()
 	 * must wait. Must be incremented around functions that unlock the
@@ -446,6 +459,7 @@ struct request_queue {
 	 * for flush operations
 	 */
 	struct blk_flush_queue	*fq;
+	unsigned long		flush_ios;
 
 	struct list_head	requeue_list;
 	spinlock_t		requeue_lock;
@@ -505,6 +519,9 @@ struct request_queue {
 #define QUEUE_FLAG_FUA	       24	/* device supports FUA writes */
 #define QUEUE_FLAG_FLUSH_NQ    25	/* flush not queueuable */
 #define QUEUE_FLAG_DAX         26	/* device supports DAX */
+#ifdef CONFIG_JOURNAL_DATA_TAG
+#define QUEUE_FLAG_JOURNAL_TAG     31      /* supports JOURNAL_DATA_TAG */
+#endif
 
 #define QUEUE_FLAG_DEFAULT	((1 << QUEUE_FLAG_IO_STAT) |		\
 				 (1 << QUEUE_FLAG_STACKABLE)	|	\
@@ -595,6 +612,11 @@ static inline void queue_flag_clear(unsigned int flag, struct request_queue *q)
 #define blk_queue_secure_erase(q) \
 	(test_bit(QUEUE_FLAG_SECERASE, &(q)->queue_flags))
 #define blk_queue_dax(q)	test_bit(QUEUE_FLAG_DAX, &(q)->queue_flags)
+
+#ifdef CONFIG_JOURNAL_DATA_TAG
+#define blk_queue_journal_tag(q) \
+	test_bit(QUEUE_FLAG_JOURNAL_TAG, &(q)->queue_flags)
+#endif
 
 #define blk_noretry_request(rq) \
 	((rq)->cmd_flags & (REQ_FAILFAST_DEV|REQ_FAILFAST_TRANSPORT| \
@@ -770,6 +792,8 @@ static inline void rq_flush_dcache_pages(struct request *rq)
 }
 #endif
 
+extern void __blk_drain_queue(struct request_queue *q, bool drain_all);
+
 #ifdef CONFIG_PRINTK
 #define vfs_msg(sb, level, fmt, ...)				\
 	__vfs_msg(sb, level, fmt, ##__VA_ARGS__)
@@ -841,7 +865,7 @@ bool blk_poll(struct request_queue *q, blk_qc_t cookie);
 
 static inline struct request_queue *bdev_get_queue(struct block_device *bdev)
 {
-	return bdev->bd_disk->queue;	/* this is never NULL */
+	return bdev->bd_queue;	/* this is never NULL */
 }
 
 /*
@@ -1142,6 +1166,7 @@ static inline struct request *blk_map_queue_find_tag(struct blk_queue_tag *bqt,
 
 #define BLKDEV_DISCARD_SECURE	(1 << 0)	/* issue a secure erase */
 #define BLKDEV_DISCARD_ZERO	(1 << 1)	/* must reliably zero data */
+#define BLKDEV_DISCARD_SYNC	(1 << 2)	/* handle discard as sync req */
 
 extern int blkdev_issue_flush(struct block_device *, gfp_t, sector_t *);
 extern int blkdev_issue_discard(struct block_device *bdev, sector_t sector,
@@ -1690,6 +1715,10 @@ struct block_device_operations {
 	void (*swap_slot_free_notify) (struct block_device *, unsigned long);
 	struct module *owner;
 	const struct pr_ops *pr_ops;
+
+#ifdef CONFIG_MMC_SRPMB
+	int (*srpmb_access) (struct block_device *bdev, struct mmc_ioc_cmd *icmd);
+#endif
 };
 
 extern int __blkdev_driver_ioctl(struct block_device *, fmode_t, unsigned int,
@@ -1700,6 +1729,79 @@ extern int bdev_write_page(struct block_device *, sector_t, struct page *,
 extern long bdev_direct_access(struct block_device *, struct blk_dax_ctl *);
 extern int bdev_dax_supported(struct super_block *, int);
 extern bool bdev_dax_capable(struct block_device *);
+
+/*
+ * X-axis for IO latency histogram support.
+ */
+static const u_int64_t latency_x_axis_us[] = {
+	100,
+	200,
+	300,
+	400,
+	500,
+	600,
+	700,
+	800,
+	900,
+	1000,
+	1200,
+	1400,
+	1600,
+	1800,
+	2000,
+	2500,
+	3000,
+	4000,
+	5000,
+	6000,
+	7000,
+	9000,
+	10000
+};
+
+#define BLK_IO_LAT_HIST_DISABLE         0
+#define BLK_IO_LAT_HIST_ENABLE          1
+#define BLK_IO_LAT_HIST_ZERO            2
+
+struct io_latency_state {
+	u_int64_t	latency_y_axis_read[ARRAY_SIZE(latency_x_axis_us) + 1];
+	u_int64_t	latency_reads_elems;
+	u_int64_t	latency_y_axis_write[ARRAY_SIZE(latency_x_axis_us) + 1];
+	u_int64_t	latency_writes_elems;
+};
+
+static inline void
+blk_update_latency_hist(struct io_latency_state *s,
+			int read,
+			u_int64_t delta_us)
+{
+	int i;
+
+	for (i = 0; i < ARRAY_SIZE(latency_x_axis_us); i++) {
+		if (delta_us < (u_int64_t)latency_x_axis_us[i]) {
+			if (read)
+				s->latency_y_axis_read[i]++;
+			else
+				s->latency_y_axis_write[i]++;
+			break;
+		}
+	}
+	if (i == ARRAY_SIZE(latency_x_axis_us)) {
+		/* Overflowed the histogram */
+		if (read)
+			s->latency_y_axis_read[i]++;
+		else
+			s->latency_y_axis_write[i]++;
+	}
+	if (read)
+		s->latency_reads_elems++;
+	else
+		s->latency_writes_elems++;
+}
+
+void blk_zero_latency_hist(struct io_latency_state *s);
+ssize_t blk_latency_hist_show(struct io_latency_state *s, char *buf);
+
 #else /* CONFIG_BLOCK */
 
 struct block_device;
@@ -1746,5 +1848,12 @@ static inline int blkdev_issue_flush(struct block_device *bdev, gfp_t gfp_mask,
 }
 
 #endif /* CONFIG_BLOCK */
+
+#if !defined(CONFIG_SAMSUNG_PRODUCT_SHIP)
+#define SIO_PATCH_VERSION(name, major, minor, description)	\
+	static const char *sio_##name##_##major##_##minor __attribute__ ((used, section("sio_patches"))) = (#name " " #major "." #minor " " description)
+#else
+#define SIO_PATCH_VERSION(name, major, minor, description)
+#endif
 
 #endif

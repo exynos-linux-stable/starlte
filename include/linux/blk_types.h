@@ -32,6 +32,7 @@ struct bio {
 						 */
 	unsigned short		bi_flags;	/* status, command, etc */
 	unsigned short		bi_ioprio;
+	unsigned short		bi_sec_flags;	/* SEC only */
 
 	struct bvec_iter	bi_iter;
 
@@ -67,6 +68,19 @@ struct bio {
 	};
 
 	unsigned short		bi_vcnt;	/* how many bio_vec's */
+	struct {
+		int		private_enc_mode;	/* Encryption mode */
+		int 		private_algo_mode;	/* Encryption algorithm */
+		unsigned char	*key;		/* Encryption Key */
+		unsigned int	key_length;	/* Encryption Key length */
+
+		/*
+		 * When using dircet-io (O_DIRECT), we can't get the inode from a bio
+		 * by walking bio->bi_io_vec->bv_page->mapping->host
+		 * since the page is anon.
+		 */
+		struct inode	*bi_dio_inode;
+	} fmp_ci;
 
 	/*
 	 * Everything starting with bi_max_vecs will be preserved by bio_reset()
@@ -119,6 +133,10 @@ struct bio {
 #define BIO_QUIET	6	/* Make BIO Quiet */
 #define BIO_CHAIN	7	/* chained bio, ->bi_remaining in effect */
 #define BIO_REFFED	8	/* bio has elevated ->bi_cnt */
+#ifdef CONFIG_JOURNAL_DATA_TAG
+/* XXX Be carefull not to touch BIO_RESET_BITS */
+#define BIO_JOURNAL    9       /* bio contains journal data */
+#endif
 
 /*
  * Flags starting here get preserved by bio_reset() - this includes
@@ -143,6 +161,9 @@ struct bio {
 #define BVEC_POOL_IDX(bio)	((bio)->bi_flags >> BVEC_POOL_OFFSET)
 
 #endif /* CONFIG_BLOCK */
+
+#define __SEC_BYPASS	(0)
+#define SEC_BYPASS	(1ULL << __SEC_BYPASS)
 
 /*
  * Request flags.  For use in the cmd_flags field of struct request, and in

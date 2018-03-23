@@ -86,8 +86,17 @@ if INET
 source "net/ipv4/Kconfig"
 source "net/ipv6/Kconfig"
 source "net/netlabel/Kconfig"
+#ifdef CONFIG_MPTCP
+	source "net/mptcp/Kconfig"
+#endif
 
 endif # if INET
+
+config ANDROID_PARANOID_NETWORK
+	bool "Only allow certain groups to create sockets"
+	default y
+	help
+		none
 
 config NETWORK_SECMARK
 	bool "Security Marking"
@@ -238,6 +247,7 @@ source "net/switchdev/Kconfig"
 source "net/l3mdev/Kconfig"
 source "net/qrtr/Kconfig"
 source "net/ncsi/Kconfig"
+source "net/ncm/Kconfig"
 
 config RPS
 	bool
@@ -257,10 +267,6 @@ config XPS
 
 config HWBM
        bool
-
-config SOCK_CGROUP_DATA
-	bool
-	default n
 
 config CGROUP_NET_PRIO
 	bool "Network priority cgroup"
@@ -435,3 +441,9 @@ config HAVE_CBPF_JIT
 # Extended BPF JIT (eBPF)
 config HAVE_EBPF_JIT
 	bool
+
+# Network Pacemaker
+config NETPM
+	bool "Network Pacemaker"
+	---help---
+	This feature implements Network Pacemaker (NETPM)

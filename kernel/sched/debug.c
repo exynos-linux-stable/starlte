@@ -261,9 +261,60 @@ set_table_entry(struct ctl_table *entry,
 }
 
 static struct ctl_table *
+sd_alloc_ctl_energy_table(struct sched_group_energy *sge)
+{
+	struct ctl_table *table = sd_alloc_ctl_entry(5);
+
+	if (table == NULL)
+		return NULL;
+
+	set_table_entry(&table[0], "nr_idle_states", &sge->nr_idle_states,
+			sizeof(int), 0644, proc_dointvec_minmax, false);
+	set_table_entry(&table[1], "idle_states", &sge->idle_states[0].power,
+			sge->nr_idle_states*sizeof(struct idle_state), 0644,
+			proc_doulongvec_minmax, false);
+	set_table_entry(&table[2], "nr_cap_states", &sge->nr_cap_states,
+			sizeof(int), 0644, proc_dointvec_minmax, false);
+	set_table_entry(&table[3], "cap_states", &sge->cap_states[0].cap,
+			sge->nr_cap_states*sizeof(struct capacity_state), 0644,
+			proc_doulongvec_minmax, false);
+
+	return table;
+}
+
+static struct ctl_table *
+sd_alloc_ctl_group_table(struct sched_group *sg)
+{
+	struct ctl_table *table = sd_alloc_ctl_entry(2);
+
+	if (table == NULL)
+		return NULL;
+
+	table->procname = kstrdup("energy", GFP_KERNEL);
+	table->mode = 0555;
+	table->child = sd_alloc_ctl_energy_table((struct sched_group_energy *)sg->sge);
+
+	return table;
+}
+
+static struct ctl_table *
 sd_alloc_ctl_domain_table(struct sched_domain *sd)
 {
-	struct ctl_table *table = sd_alloc_ctl_entry(14);
+	struct ctl_table *table;
+	unsigned int nr_entries = 14;
+
+	int i = 0;
+	struct sched_group *sg = sd->groups;
+
+	if (sg->sge) {
+		int nr_sgs = 0;
+
+		do {} while (nr_sgs++, sg = sg->next, sg != sd->groups);
+
+		nr_entries += nr_sgs;
+	}
+
+	table = sd_alloc_ctl_entry(nr_entries);
 
 	if (table == NULL)
 		return NULL;
@@ -296,7 +347,19 @@ sd_alloc_ctl_domain_table(struct sched_domain *sd)
 		sizeof(long), 0644, proc_doulongvec_minmax, false);
 	set_table_entry(&table[12], "name", sd->name,
 		CORENAME_MAX_SIZE, 0444, proc_dostring, false);
-	/* &table[13] is terminator */
+	sg = sd->groups;
+	if (sg->sge) {
+		char buf[32];
+		struct ctl_table *entry = &table[13];
+
+		do {
+			snprintf(buf, 32, "group%d", i);
+			entry->procname = kstrdup(buf, GFP_KERNEL);
+			entry->mode = 0555;
+			entry->child = sd_alloc_ctl_group_table(sg);
+		} while (entry++, i++, sg = sg->next, sg != sd->groups);
+	}
+	/* &table[nr_entries-1] is terminator */
 
 	return table;
 }
@@ -326,29 +389,70 @@ static struct ctl_table *sd_alloc_ctl_cpu_table(int cpu)
 	return table;
 }
 
+static cpumask_var_t sd_sysctl_cpus;
 static struct ctl_table_header *sd_sysctl_header;
 void register_sched_domain_sysctl(void)
 {
-	int i, cpu_num = num_possible_cpus();
-	struct ctl_table *entry = sd_alloc_ctl_entry(cpu_num + 1);
+	static struct ctl_table *cpu_entries;
+	static struct ctl_table **cpu_idx;
 	char buf[32];
+	int i;
 
-	WARN_ON(sd_ctl_dir[0].child);
-	sd_ctl_dir[0].child = entry;
+	if (!cpu_entries) {
+		cpu_entries = sd_alloc_ctl_entry(num_possible_cpus() + 1);
+		if (!cpu_entries)
+			return;
 
-	if (entry == NULL)
-		return;
+		WARN_ON(sd_ctl_dir[0].child);
+		sd_ctl_dir[0].child = cpu_entries;
+	}
 
-	for_each_possible_cpu(i) {
-		snprintf(buf, 32, "cpu%d", i);
-		entry->procname = kstrdup(buf, GFP_KERNEL);
-		entry->mode = 0555;
-		entry->child = sd_alloc_ctl_cpu_table(i);
-		entry++;
+       if (!cpu_idx) {
+               struct ctl_table *e = cpu_entries;
+
+               cpu_idx = kcalloc(nr_cpu_ids, sizeof(struct ctl_table*), GFP_KERNEL);
+               if (!cpu_idx)
+                       return;
+
+               /* deal with sparse possible map */
+               for_each_possible_cpu(i) {
+                       cpu_idx[i] = e;
+                       e++;
+               }
+       }
+
+       if (!cpumask_available(sd_sysctl_cpus)) {
+               if (!alloc_cpumask_var(&sd_sysctl_cpus, GFP_KERNEL))
+                       return;
+
+               /* init to possible to not have holes in @cpu_entries */
+               cpumask_copy(sd_sysctl_cpus, cpu_possible_mask);
+       }
+
+       for_each_cpu(i, sd_sysctl_cpus) {
+               struct ctl_table *e = cpu_idx[i];
+
+               if (e->child)
+                       sd_free_ctl_entry(&e->child);
+
+               if (!e->procname) {
+                       snprintf(buf, 32, "cpu%d", i);
+                       e->procname = kstrdup(buf, GFP_KERNEL);
+               }
+               e->mode = 0555;
+               e->child = sd_alloc_ctl_cpu_table(i);
+
+               __cpumask_clear_cpu(i, sd_sysctl_cpus);
 	}
 
 	WARN_ON(sd_sysctl_header);
 	sd_sysctl_header = register_sysctl_table(sd_ctl_root);
+}
+
+void dirty_sched_domain_sysctl(int cpu)
+{
+	if (cpumask_available(sd_sysctl_cpus))
+		__cpumask_set_cpu(cpu, sd_sysctl_cpus);
 }
 
 /* may be called multiple times per register */
@@ -356,8 +460,6 @@ void unregister_sched_domain_sysctl(void)
 {
 	unregister_sysctl_table(sd_sysctl_header);
 	sd_sysctl_header = NULL;
-	if (sd_ctl_dir[0].child)
-		sd_free_ctl_entry(&sd_ctl_dir[0].child);
 }
 #endif /* CONFIG_SYSCTL */
 #endif /* CONFIG_SMP */
@@ -918,6 +1020,32 @@ void proc_sched_show_task(struct task_struct *p, struct seq_file *m)
 		P_SCHEDSTAT(se.statistics.nr_wakeups_affine_attempts);
 		P_SCHEDSTAT(se.statistics.nr_wakeups_passive);
 		P_SCHEDSTAT(se.statistics.nr_wakeups_idle);
+		/* eas */
+		/* select_idle_sibling() */
+		P_SCHEDSTAT(se.statistics.nr_wakeups_sis_attempts);
+		P_SCHEDSTAT(se.statistics.nr_wakeups_sis_idle);
+		P_SCHEDSTAT(se.statistics.nr_wakeups_sis_cache_affine);
+		P_SCHEDSTAT(se.statistics.nr_wakeups_sis_suff_cap);
+		P_SCHEDSTAT(se.statistics.nr_wakeups_sis_idle_cpu);
+		P_SCHEDSTAT(se.statistics.nr_wakeups_sis_count);
+		/* select_energy_cpu_brute() */
+		P_SCHEDSTAT(se.statistics.nr_wakeups_secb_attempts);
+		P_SCHEDSTAT(se.statistics.nr_wakeups_secb_sync);
+		P_SCHEDSTAT(se.statistics.nr_wakeups_secb_idle_bt);
+		P_SCHEDSTAT(se.statistics.nr_wakeups_secb_insuff_cap);
+		P_SCHEDSTAT(se.statistics.nr_wakeups_secb_no_nrg_sav);
+		P_SCHEDSTAT(se.statistics.nr_wakeups_secb_nrg_sav);
+		P_SCHEDSTAT(se.statistics.nr_wakeups_secb_count);
+		/* find_best_target() */
+		P_SCHEDSTAT(se.statistics.nr_wakeups_fbt_attempts);
+		P_SCHEDSTAT(se.statistics.nr_wakeups_fbt_no_cpu);
+		P_SCHEDSTAT(se.statistics.nr_wakeups_fbt_no_sd);
+		P_SCHEDSTAT(se.statistics.nr_wakeups_fbt_pref_idle);
+		P_SCHEDSTAT(se.statistics.nr_wakeups_fbt_count);
+		/* cas */
+		/* select_task_rq_fair() */
+		P_SCHEDSTAT(se.statistics.nr_wakeups_cas_attempts);
+		P_SCHEDSTAT(se.statistics.nr_wakeups_cas_count);
 
 		avg_atom = p->se.sum_exec_runtime;
 		if (nr_switches)
