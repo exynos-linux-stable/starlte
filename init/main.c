@@ -80,6 +80,7 @@
 #include <linux/integrity.h>
 #include <linux/proc_ns.h>
 #include <linux/io.h>
+#include <linux/kaiser.h>
 
 #include <asm/io.h>
 #include <asm/bugs.h>
@@ -535,6 +536,7 @@ static void __init mm_init(void)
 	pgtable_init();
 	vmalloc_init();
 	ioremap_huge_init();
+	kaiser_init();
 #ifdef CONFIG_PTRACK_DEBUG
 	ptrack_init();
 #endif
@@ -781,7 +783,7 @@ asmlinkage __visible void __init start_kernel(void)
 #endif
 	thread_stack_cache_init();
 #ifdef CONFIG_RKP_KDP
-	if (rkp_cred_enable) 
+	if (rkp_cred_enable)
 		kdp_init();
 #endif /*CONFIG_RKP_KDP*/
 	cred_init();
@@ -791,7 +793,7 @@ asmlinkage __visible void __init start_kernel(void)
 	key_init();
 	security_init();
 #ifdef CONFIG_RKP_KDP
-	if (rkp_cred_enable) 
+	if (rkp_cred_enable)
 		uh_call(UH_APP_RKP, 0x51, (u64)__rkp_ro_start, 0, 0, 0);
 #endif /*CONFIG_RKP_KDP*/
 	dbg_late_init();
