@@ -787,6 +787,7 @@ __acquires(bitlock)
 	}
 
 	ext4_unlock_group(sb, grp);
+	ext4_commit_super(sb, 1);
 	ext4_handle_error(sb, page_buf);
 	if (page_buf)
 		free_page((unsigned long)page_buf);
@@ -2702,9 +2703,9 @@ static unsigned long ext4_get_stripe_size(struct ext4_sb_info *sbi)
 
 	if (sbi->s_stripe && sbi->s_stripe <= sbi->s_blocks_per_group)
 		ret = sbi->s_stripe;
-	else if (stripe_width <= sbi->s_blocks_per_group)
+	else if (stripe_width && stripe_width <= sbi->s_blocks_per_group)
 		ret = stripe_width;
-	else if (stride <= sbi->s_blocks_per_group)
+	else if (stride && stride <= sbi->s_blocks_per_group)
 		ret = stride;
 	else
 		ret = 0;
@@ -4231,7 +4232,7 @@ no_journal:
 	}
 
 	block = ext4_count_free_clusters(sb);
-	ext4_free_blocks_count_set(sbi->s_es, 
+	ext4_free_blocks_count_set(sbi->s_es,
 				   EXT4_C2B(sbi, block));
 	err = percpu_counter_init(&sbi->s_freeclusters_counter, block,
 				  GFP_KERNEL);

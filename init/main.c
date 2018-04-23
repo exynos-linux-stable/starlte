@@ -80,6 +80,8 @@
 #include <linux/integrity.h>
 #include <linux/proc_ns.h>
 #include <linux/io.h>
+#include <linux/kaiser.h>
+#include <linux/cache.h>
 
 #include <asm/io.h>
 #include <asm/bugs.h>
@@ -535,6 +537,7 @@ static void __init mm_init(void)
 	pgtable_init();
 	vmalloc_init();
 	ioremap_huge_init();
+	kaiser_init();
 #ifdef CONFIG_PTRACK_DEBUG
 	ptrack_init();
 #endif
@@ -781,7 +784,7 @@ asmlinkage __visible void __init start_kernel(void)
 #endif
 	thread_stack_cache_init();
 #ifdef CONFIG_RKP_KDP
-	if (rkp_cred_enable) 
+	if (rkp_cred_enable)
 		kdp_init();
 #endif /*CONFIG_RKP_KDP*/
 	cred_init();
@@ -791,7 +794,7 @@ asmlinkage __visible void __init start_kernel(void)
 	key_init();
 	security_init();
 #ifdef CONFIG_RKP_KDP
-	if (rkp_cred_enable) 
+	if (rkp_cred_enable)
 		uh_call(UH_APP_RKP, 0x51, (u64)__rkp_ro_start, 0, 0, 0);
 #endif /*CONFIG_RKP_KDP*/
 	dbg_late_init();
@@ -1078,14 +1081,16 @@ static int try_to_run_init_process(const char *init_filename)
 
 static noinline void __init kernel_init_freeable(void);
 
-#ifdef CONFIG_DEBUG_RODATA
-static bool rodata_enabled = true;
+#if defined(CONFIG_DEBUG_RODATA) || defined(CONFIG_SET_MODULE_RONX)
+bool rodata_enabled __ro_after_init = true;
 static int __init set_debug_rodata(char *str)
 {
 	return strtobool(str, &rodata_enabled);
 }
 __setup("rodata=", set_debug_rodata);
+#endif
 
+#ifdef CONFIG_DEBUG_RODATA
 static void mark_readonly(void)
 {
 	if (rodata_enabled)
