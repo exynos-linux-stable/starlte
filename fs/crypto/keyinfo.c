@@ -12,6 +12,9 @@
 #include <linux/scatterlist.h>
 #include <linux/fscrypto.h>
 
+#include <crypto/fmp.h>
+
+#ifndef CONFIG_FS_CRYPTO_SEC_EXTENSION
 static void derive_crypt_complete(struct crypto_async_request *req, int rc)
 {
 	struct fscrypt_completion_result *ecr = req->data;
@@ -74,6 +77,16 @@ out:
 	crypto_free_skcipher(tfm);
 	return res;
 }
+#endif
+
+static inline int get_fe_key(char *nonce, char *src_key, char *fe_key)
+{
+#ifdef CONFIG_FS_CRYPTO_SEC_EXTENSION
+	return fscrypt_sec_get_key_aes(nonce, src_key, fe_key);
+#else
+	return derive_key_aes(nonce, src_key, fe_key);
+#endif /* CONFIG FS_CRYPTO_SEC_EXTENSION */
+}
 
 static int validate_user_key(struct fscrypt_info *crypt_info,
 			struct fscrypt_context *ctx, u8 *raw_key,
@@ -118,7 +131,7 @@ static int validate_user_key(struct fscrypt_info *crypt_info,
 		goto out;
 	}
 	master_key = (struct fscrypt_key *)ukp->data;
-	BUILD_BUG_ON(FS_AES_128_ECB_KEY_SIZE != FS_KEY_DERIVATION_NONCE_SIZE);
+	BUILD_BUG_ON(FS_ESTIMATED_NONCE_SIZE != FS_KEY_DERIVATION_NONCE_SIZE);
 
 	if (master_key->size != FS_AES_256_XTS_KEY_SIZE) {
 		printk_once(KERN_WARNING
@@ -127,7 +140,7 @@ static int validate_user_key(struct fscrypt_info *crypt_info,
 		res = -ENOKEY;
 		goto out;
 	}
-	res = derive_key_aes(ctx->nonce, master_key->raw, raw_key);
+	res = get_fe_key(ctx->nonce, master_key->raw, raw_key);
 out:
 	up_read(&keyring_key->sem);
 	key_put(keyring_key);
@@ -143,6 +156,21 @@ static int determine_cipher_type(struct fscrypt_info *ci, struct inode *inode,
 			*keysize_ret = FS_AES_256_XTS_KEY_SIZE;
 			return 0;
 		}
+#ifdef CONFIG_FS_PRIVATE_ENCRYPTION
+		else if (ci->ci_data_mode == FS_PRIVATE_ENCRYPTION_MODE_AES_256_XTS) {
+			*cipher_str_ret = "xts(aes)";
+			inode->i_mapping->fmp_ci.private_algo_mode =
+						EXYNOS_FMP_ALGO_MODE_AES_XTS;
+			*keysize_ret = FS_AES_256_XTS_KEY_SIZE;
+			return 0;
+		} else if (ci->ci_data_mode == FS_PRIVATE_ENCRYPTION_MODE_AES_256_CBC) {
+			*cipher_str_ret = "cbc(aes)";
+			inode->i_mapping->fmp_ci.private_algo_mode =
+						EXYNOS_FMP_ALGO_MODE_AES_CBC;
+			*keysize_ret = FS_AES_256_CBC_KEY_SIZE;
+			return 0;
+		}
+#endif
 		pr_warn_once("fscrypto: unsupported contents encryption mode "
 			     "%d for inode %lu\n",
 			     ci->ci_data_mode, inode->i_ino);
@@ -160,6 +188,7 @@ static int determine_cipher_type(struct fscrypt_info *ci, struct inode *inode,
 			     ci->ci_filename_mode, inode->i_ino);
 		return -ENOKEY;
 	}
+
 
 	pr_warn_once("fscrypto: unsupported file type %d for inode %lu\n",
 		     (inode->i_mode & S_IFMT), inode->i_ino);
@@ -200,7 +229,11 @@ int fscrypt_get_encryption_info(struct inode *inode)
 		if (!fscrypt_dummy_context_enabled(inode))
 			return res;
 		ctx.format = FS_ENCRYPTION_CONTEXT_FORMAT_V1;
+#ifdef CONFIG_FS_PRIVATE_ENCRYPTION
+		ctx.contents_encryption_mode = FS_PRIVATE_ENCRYPTION_MODE_AES_256_XTS;
+#else
 		ctx.contents_encryption_mode = FS_ENCRYPTION_MODE_AES_256_XTS;
+#endif
 		ctx.filenames_encryption_mode = FS_ENCRYPTION_MODE_AES_256_CTS;
 		ctx.flags = 0;
 	} else if (res != sizeof(ctx)) {
@@ -220,6 +253,14 @@ int fscrypt_get_encryption_info(struct inode *inode)
 	crypt_info->ci_flags = ctx.flags;
 	crypt_info->ci_data_mode = ctx.contents_encryption_mode;
 	crypt_info->ci_filename_mode = ctx.filenames_encryption_mode;
+#ifdef CONFIG_FS_PRIVATE_ENCRYPTION
+        if (ctx.filenames_encryption_mode == FS_PRIVATE_ENCRYPTION_MODE_AES_256_XTS ||
+			ctx.filenames_encryption_mode == FS_PRIVATE_ENCRYPTION_MODE_AES_256_CBC) {
+                printk(KERN_WARNING "Doesn't support filename encryption mode.\n");
+		printk(KERN_WARNING "Forcely, change it to AES_256_CTS mode.\n");
+                ctx.filenames_encryption_mode = FS_ENCRYPTION_MODE_AES_256_CTS;
+        }
+#endif
 	crypt_info->ci_ctfm = NULL;
 	memcpy(crypt_info->ci_master_key, ctx.master_key_descriptor,
 				sizeof(crypt_info->ci_master_key));
@@ -260,20 +301,29 @@ int fscrypt_get_encryption_info(struct inode *inode)
 		goto out;
 	}
 got_key:
-	ctfm = crypto_alloc_skcipher(cipher_str, 0, 0);
-	if (!ctfm || IS_ERR(ctfm)) {
-		res = ctfm ? PTR_ERR(ctfm) : -ENOMEM;
-		printk(KERN_DEBUG
-		       "%s: error %d (inode %u) allocating crypto tfm\n",
-		       __func__, res, (unsigned) inode->i_ino);
-		goto out;
+	if (inode->i_mapping->fmp_ci.private_algo_mode == EXYNOS_FMP_ALGO_MODE_AES_XTS ||
+			inode->i_mapping->fmp_ci.private_algo_mode == EXYNOS_FMP_ALGO_MODE_AES_CBC) {
+		memset(inode->i_mapping->fmp_ci.key, 0, MAX_KEY_SIZE);
+		memcpy(inode->i_mapping->fmp_ci.key, raw_key, keysize);
+		inode->i_mapping->fmp_ci.key_length = keysize;
+	} else {
+		inode->i_mapping->fmp_ci.private_algo_mode = EXYNOS_FMP_BYPASS_MODE;
+
+		ctfm = crypto_alloc_skcipher(cipher_str, 0, 0);
+		if (!ctfm || IS_ERR(ctfm)) {
+			res = ctfm ? PTR_ERR(ctfm) : -ENOMEM;
+			printk(KERN_DEBUG
+			       "%s: error %d (inode %u) allocating crypto tfm\n",
+			       __func__, res, (unsigned) inode->i_ino);
+			goto out;
+		}
+		crypt_info->ci_ctfm = ctfm;
+		crypto_skcipher_clear_flags(ctfm, ~0);
+		crypto_skcipher_set_flags(ctfm, CRYPTO_TFM_REQ_WEAK_KEY);
+		res = crypto_skcipher_setkey(ctfm, raw_key, keysize);
+		if (res)
+			goto out;
 	}
-	crypt_info->ci_ctfm = ctfm;
-	crypto_skcipher_clear_flags(ctfm, ~0);
-	crypto_skcipher_set_flags(ctfm, CRYPTO_TFM_REQ_WEAK_KEY);
-	res = crypto_skcipher_setkey(ctfm, raw_key, keysize);
-	if (res)
-		goto out;
 
 	if (cmpxchg(&inode->i_crypt_info, NULL, crypt_info) == NULL)
 		crypt_info = NULL;

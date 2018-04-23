@@ -71,7 +71,11 @@
 #define BAD_ERROR	3
 
 	.macro	kernel_entry, el, regsize = 64
+	.if	\el == 0
 	sub	sp, sp, #S_FRAME_SIZE
+	.else
+	sub	sp, sp, #(S_FRAME_SIZE+PRESERVE_STACK_SIZE)
+	.endif /* \el == 0 */
 	.if	\regsize == 32
 	mov	w0, w0				// zero upper 32 bits of x0
 	.endif
@@ -100,7 +104,7 @@
 
 	mov	x29, xzr			// fp pointed to user-space
 	.else
-	add	x21, sp, #S_FRAME_SIZE
+	add	x21, sp, #(S_FRAME_SIZE+PRESERVE_STACK_SIZE)
 	get_thread_info tsk
 	/* Save the task's original addr_limit and set USER_DS (TASK_SIZE_64) */
 	ldr	x20, [tsk, #TI_ADDR_LIMIT]
@@ -244,7 +248,11 @@ alternative_else_nop_endif
 	ldp	x26, x27, [sp, #16 * 13]
 	ldp	x28, x29, [sp, #16 * 14]
 	ldr	lr, [sp, #S_LR]
+	.if	\el == 0
 	add	sp, sp, #S_FRAME_SIZE		// restore sp
+	.else
+	add	sp, sp, #(S_FRAME_SIZE+PRESERVE_STACK_SIZE)
+	.endif /* \el == 0 */
 	eret					// return to kernel
 	.endm
 
@@ -315,7 +323,11 @@ tsk	.req	x28		// current thread_info
 	.pushsection ".entry.text", "ax"
 
 	.align	11
+#ifdef CONFIG_RKP_CFP_JOPP
+VECTOR_ENTRY(vectors)
+#else
 ENTRY(vectors)
+#endif
 	ventry	el1_sync_invalid		// Synchronous EL1t
 	ventry	el1_irq_invalid			// IRQ EL1t
 	ventry	el1_fiq_invalid			// FIQ EL1t
@@ -402,7 +414,40 @@ ENDPROC(el1_error_invalid)
  */
 	.align	6
 el1_sync:
+/* store used gprs(x0, x1) through stack */
+	stp     x0, x1, [sp, #-0x10]!
+	mrs     x0, esr_el1
+	mov     x1, #0x30
+	movk    x1, #0x9600, lsl #0x10
+        cmp     x0, x1
+        b.eq    96f
+	movk    x1, #0x8600, lsl #0x10
+        cmp     x0, x1
+        b.eq    86f
+	b	skip
+96:
+86:
+/* recovery tlb confilict */
+	dsb     sy
+	tlbi    vmalle1is
+	dsb     sy
+
+/* Add count for recovery count */
+        ldr_l   x0, __tlb_conflict_cnt
+        add     x0, x0, #1
+	cmp     x0, #0x100
+        b.ge    skip
+        str_l   x0, __tlb_conflict_cnt, x1
+	ldp	x0, x1, [sp]
+	add	sp, sp, #0x10
+        kernel_entry 1
+        kernel_exit 1
+skip:
+	ldp	x0, x1, [sp]
+	add	sp, sp, #0x10
 	kernel_entry 1
+	mov	x9, #0
+	str_l	x9, __tlb_conflict_cnt, x8
 	mrs	x1, esr_el1			// read the syndrome register
 	lsr	x24, x1, #ESR_ELx_EC_SHIFT	// exception class
 	cmp	x24, #ESR_ELx_EC_DABT_CUR	// data abort in EL1
@@ -456,6 +501,7 @@ el1_undef:
 	 */
 	enable_dbg
 	mov	x0, sp
+	mrs	x1, esr_el1			// read the syndrome register
 	b	do_undefinstr
 el1_dbg:
 	/*
@@ -655,6 +701,7 @@ el0_undef:
 	enable_dbg_and_irq
 	ct_user_exit
 	mov	x0, sp
+	mrs	x1, esr_el1			// read the syndrome register
 	bl	do_undefinstr
 	b	ret_to_user
 el0_sys:
@@ -867,3 +914,4 @@ ENTRY(sys_rt_sigreturn_wrapper)
 	mov	x0, sp
 	b	sys_rt_sigreturn
 ENDPROC(sys_rt_sigreturn_wrapper)
+

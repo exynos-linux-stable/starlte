@@ -10,4 +10,5 @@ obj-$(CONFIG_ION_DUMMY) += ion_dummy_driver.o
 obj-$(CONFIG_ION_TEGRA) += tegra/
 obj-$(CONFIG_ION_HISI) += hisilicon/
 obj-$(CONFIG_ION_OF) += ion_of.o
-
+obj-$(CONFIG_DMA_CMA) += ion_cma_heap.o
+obj-$(CONFIG_ION_EXYNOS) += exynos/

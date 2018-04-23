@@ -25,7 +25,7 @@ config ARM64
 	select ARM_GIC
 	select AUDIT_ARCH_COMPAT_GENERIC
 	select ARM_GIC_V2M if PCI
-	select ARM_GIC_V3
+	select ARM_GIC_V3 if !ARCH_EXYNOS
 	select ARM_GIC_V3_ITS if PCI
 	select ARM_PSCI_FW
 	select BUILDTIME_EXTABLE_SORT
@@ -83,7 +83,7 @@ config ARM64
 	select HAVE_FUNCTION_GRAPH_TRACER
 	select HAVE_GCC_PLUGINS
 	select HAVE_GENERIC_DMA_COHERENT
-	select HAVE_HW_BREAKPOINT if PERF_EVENTS
+#	select HAVE_HW_BREAKPOINT if PERF_EVENTS
 	select HAVE_IRQ_TIME_ACCOUNTING
 	select HAVE_MEMBLOCK
 	select HAVE_MEMBLOCK_NODE_MAP if NUMA
@@ -109,6 +109,7 @@ config ARM64
 	select POWER_SUPPLY
 	select SPARSE_IRQ
 	select SYSCTL_EXCEPTION_TRACE
+	select SECCOMP
 	help
 	  ARM 64-bit (AArch64) Linux support.
 
@@ -119,9 +120,6 @@ config ARCH_PHYS_ADDR_T_64BIT
 	def_bool y
 
 config MMU
-	def_bool y
-
-config DEBUG_RODATA
 	def_bool y
 
 config ARM64_PAGE_SHIFT
@@ -200,7 +198,7 @@ config GENERIC_CALIBRATE_DELAY
 	def_bool y
 
 config ZONE_DMA
-	def_bool y
+	def_bool n
 
 config HAVE_GENERIC_RCU_GUP
 	def_bool y
@@ -427,6 +425,10 @@ config ARM64_ERRATUM_843419
 
 	  If unsure, say Y.
 
+config ARM64_ERRATUM_814818
+	bool "Ananke : Allocating streaming write might deadlock"
+	default y
+
 config CAVIUM_ERRATUM_22375
 	bool "Cavium erratum 22375, 24313"
 	default y
@@ -572,6 +574,113 @@ config SCHED_SMT
 	  Improves the CPU scheduler's decision making when dealing with
 	  MultiThreading at a cost of slightly increased overhead in some
 	  places. If unsure say N here.
+
+config DISABLE_CPU_SCHED_DOMAIN_BALANCE
+	bool "(EXPERIMENTAL) Disable CPU level scheduler load-balancing"
+	help
+	  Disables scheduler load-balancing at CPU sched domain level.
+
+config SCHED_HMP
+	bool "(EXPERIMENTAL) Heterogenous multiprocessor scheduling"
+	depends on DISABLE_CPU_SCHED_DOMAIN_BALANCE && SCHED_MC && FAIR_GROUP_SCHED && !SCHED_AUTOGROUP
+	help
+	  Experimental scheduler optimizations for heterogeneous platforms.
+	  Attempts to introspectively select task affinity to optimize power
+	  and performance. Basic support for multiple (>2) cpu types is in place,
+	  but it has only been tested with two types of cpus.
+	  There is currently no support for migration of task groups, hence
+	  !SCHED_AUTOGROUP. Furthermore, normal load-balancing must be disabled
+	  between cpus of different type (DISABLE_CPU_SCHED_DOMAIN_BALANCE).
+
+config SCHED_HMP_PRIO_FILTER
+	bool "(EXPERIMENTAL) Filter HMP migrations by task priority"
+	depends on SCHED_HMP
+	help
+	  Enables task priority based HMP migration filter. Any task with
+	  a NICE value above the threshold will always be on low-power cpus
+	  with less compute capacity.
+
+config SCHED_HMP_PRIO_FILTER_VAL
+	int "NICE priority threshold"
+	default 5
+	depends on SCHED_HMP_PRIO_FILTER
+
+config HMP_FAST_CPU_MASK
+	string "HMP scheduler fast CPU mask"
+	depends on SCHED_HMP
+	help
+          Leave empty to use device tree information.
+	  Specify the cpuids of the fast CPUs in the system as a list string,
+	  e.g. cpuid 0+1 should be specified as 0-1.
+
+config HMP_SLOW_CPU_MASK
+	string "HMP scheduler slow CPU mask"
+	depends on SCHED_HMP
+	help
+	  Leave empty to use device tree information.
+	  Specify the cpuids of the slow CPUs in the system as a list string,
+	  e.g. cpuid 0+1 should be specified as 0-1.
+
+config HMP_VARIABLE_SCALE
+	bool "Allows changing the load tracking scale through sysfs"
+	depends on SCHED_HMP
+	default y
+	help
+	  When turned on, this option exports the thresholds and load average
+	  period value for the load tracking patches through sysfs.
+	  The values can be modified to change the rate of load accumulation
+	  and the thresholds used for HMP migration.
+	  The load_avg_period_ms is the time in ms to reach a load average of
+	  0.5 for an idle task of 0 load average ratio that start a busy loop.
+	  The up_threshold and down_threshold is the value to go to a faster
+	  CPU or to go back to a slower cpu.
+	  The {up,down}_threshold are devided by 1024 before being compared
+	  to the load average.
+	  For examples, with load_avg_period_ms = 128 and up_threshold = 512,
+	  a running task with a load of 0 will be migrated to a bigger CPU after
+	  128ms, because after 128ms its load_avg_ratio is 0.5 and the real
+	  up_threshold is 0.5.
+	  This patch has the same behavior as changing the Y of the load
+	  average computation to
+	        (1002/1024)^(LOAD_AVG_PERIOD/load_avg_period_ms)
+	  but it remove intermadiate overflows in computation.
+
+config HMP_FREQUENCY_INVARIANT_SCALE
+	bool "(EXPERIMENTAL) Frequency-Invariant Tracked Load for HMP"
+	depends on HMP_VARIABLE_SCALE && CPU_FREQ
+	default n
+	help
+	  Scales the current load contribution in line with the frequency
+	  of the CPU that the task was executed on.
+	  In this version, we use a simple linear scale derived from the
+	  maximum frequency reported by CPUFreq.
+	  Restricting tracked load to be scaled by the CPU's frequency
+	  represents the consumption of possible compute capacity
+	  (rather than consumption of actual instantaneous capacity as
+	  normal) and allows the HMP migration's simple threshold
+	  migration strategy to interact more predictably with CPUFreq's
+	  asynchronous compute capacity changes.
+
+config SCHED_HMP_LITTLE_PACKING
+	bool "Small task packing for HMP"
+	depends on SCHED_HMP
+	default n
+	help
+	  Allows the HMP Scheduler to pack small tasks into CPUs in the
+	  smallest HMP domain.
+	  Controlled by two sysfs files in sys/kernel/hmp.
+	  packing_enable: 1 to enable, 0 to disable packing. Default 1.
+	  packing_limit: runqueue load ratio where a RQ is considered
+	    to be full. Default is NICE_0_LOAD * 9/8.
+
+config SCHED_HMP_TASK_BASED_SOFTLANDING
+	bool "(EXPERIMENTAL) Task based softlanding for HMP down migration"
+	depends on SCHED_HMP && CPU_FREQ
+	help
+	  Enables task based softlanding when HMP down migration.
+	  The task based softlanding guarantees proper performance
+	  to the down-migrated task by frequency qos lock.
+
 
 config NR_CPUS
 	int "Maximum number of CPUs (2-4096)"
@@ -808,6 +917,19 @@ config ARM64_SW_TTBR0_PAN
 	  zeroed area and reserved ASID. The user access routines
 	  restore the valid TTBR0_EL1 temporarily.
 
+menu "JOP Attack Prevention"
+
+config RKP_CFP_JOPP
+	bool "Function pointer jumps to function entries only."
+	default n
+
+config RKP_CFP_JOPP_MAGIC
+	hex
+	depends on RKP_CFP_JOPP
+	default "0x00be7bad"
+
+endmenu
+
 menu "ARMv8.1 architectural features"
 
 config ARM64_HW_AFDBM
@@ -900,6 +1022,13 @@ config ARM64_MODULE_PLTS
 	bool
 	select ARM64_MODULE_CMODEL_LARGE
 	select HAVE_MOD_ARCH_SPECIFIC
+
+config RELOCATABLE_KERNEL
+	bool "set kernel to relocatable in both virtual and physical address"
+	default n
+	help
+	  This configuare will allow you to config the kernel into position
+	  independent kernel, with '--PIE' insert into LD script.
 
 config RELOCATABLE
 	bool
@@ -1051,6 +1180,69 @@ config BUILD_ARM64_APPENDED_KERNEL_IMAGE_NAME
 	depends on BUILD_ARM64_APPENDED_DTB_IMAGE
 	default "Image.gz-dtb" if IMG_GZ_DTB
 	default "Image-dtb" if IMG_DTB
+
+config TIMA
+	bool "Enable TIMA(Trustzone based Integrity Measurement Archtecture) feature"
+	default n
+
+config UH
+	bool "Enable micro hypervisor feature"
+	default n
+	help
+	  It enables a micro hypervisor.
+	  It's samsung's hypervisor.
+	  RKP and etc can be loaded on it.
+	  please check a memory map for it.
+
+config UH_DEBUG
+    bool "Enable micro hypervisor debug feature"
+	default n
+	help
+	  It's for debugging uH.
+
+config UH_RKP
+	bool "Enable RKP (Realtime Kernel Protection) UH feature"
+	select UH
+	default n
+	help
+	  it protects a kernel text and etc.
+
+config UH_RKP_6G
+	bool "Support 6G Model"
+	default n
+	help
+	  support 6G
+
+config UH_INFORM
+    bool "Debugfs for information of the security feature's active/inactive statue"
+	default n
+	help
+	  This config has the information of RKP,JOPP,ROPP,KDP,DMV.
+	  It informs that the above feature are whether active or inactive.
+
+config RKP_KDP
+	bool "Protection for cred structure"
+	depends on !SEC_FACTORY
+	depends on UH_RKP
+	default n
+	help
+	  Prevents unauthorized cred modification.
+
+config RKP_NS_PROT
+	bool "Protection for namespace structure"
+	depends on !SEC_FACTORY
+	depends on RKP_KDP
+	default n
+	help
+	  Prevents unauthorized namespace modification.
+
+config RKP_DMAP_PROT
+	bool "Page Double Mapping protection"
+	depends on !SEC_FACTORY
+	depends on RKP_KDP
+	default n
+	help
+	  Prevents unauthorized mapping for page table.
 
 config BUILD_ARM64_APPENDED_DTB_IMAGE_NAMES
 	string "Default dtb names"

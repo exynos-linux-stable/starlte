@@ -105,4 +105,10 @@ config USB_DWC3_ST
 	  inside (i.e. STiH407).
 	  Say 'Y' or 'M' if you have one such device.
 
+config USB_ANDROID_SAMSUNG_DISABLE_U1_U2
+	bool "Disable U1/U2 state"
+	depends on USB_DWC3_GADGET=y || USB_DWC3_DUAL_ROLE=y
+	default n
+	help
+	  Select this when you want to disable U1/U2 state in USB 3.0
 endif

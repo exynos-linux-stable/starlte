@@ -34,6 +34,7 @@
 
 int main(void)
 {
+  DEFINE(TSK_PID,		offsetof(struct task_struct, pid));
   DEFINE(TSK_ACTIVE_MM,		offsetof(struct task_struct, active_mm));
   BLANK();
   DEFINE(TI_FLAGS,		offsetof(struct thread_info, flags));
@@ -85,6 +86,7 @@ int main(void)
   BLANK();
   DEFINE(VM_EXEC,	       	VM_EXEC);
   BLANK();
+  DEFINE(PRESERVE_STACK_SIZE,	PRESERVE_STACK_SIZE);
   DEFINE(PAGE_SZ,	       	PAGE_SIZE);
   BLANK();
   DEFINE(DMA_BIDIRECTIONAL,	DMA_BIDIRECTIONAL);

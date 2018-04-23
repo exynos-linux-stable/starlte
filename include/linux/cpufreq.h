@@ -161,7 +161,7 @@ static inline void cpufreq_cpu_put(struct cpufreq_policy *policy) { }
 
 static inline bool policy_is_shared(struct cpufreq_policy *policy)
 {
-	return cpumask_weight(policy->cpus) > 1;
+	return cpumask_weight(policy->related_cpus) > 1;
 }
 
 /* /sys/devices/system/cpu/cpufreq: entry point for global variables */
@@ -493,7 +493,8 @@ static inline unsigned long cpufreq_scale(unsigned long old, u_int div,
  * the ondemand governor will not work. All times here are in us (microseconds).
  */
 #define MIN_SAMPLING_RATE_RATIO		(2)
-#define LATENCY_MULTIPLIER		(1000)
+#define UP_LATENCY_MULTIPLIER		(50)
+#define DOWN_LATENCY_MULTIPLIER		(100)
 #define MIN_LATENCY_MULTIPLIER		(20)
 #define TRANSITION_LATENCY_LIMIT	(10 * 1000 * 1000)
 
@@ -589,6 +590,11 @@ extern struct cpufreq_governor cpufreq_gov_sched;
 #define CPUFREQ_DEFAULT_GOVERNOR	(&cpufreq_gov_sched)
 #endif
 
+#if defined (CONFIG_CPU_FREQ_GOV_SCHEDUTIL)
+int sugov_fast_start(struct cpufreq_policy *policy, unsigned int cpu);
+#else
+static inline int sugov_fast_start(struct cpufreq_policy *policy, unsigned int cpu) { return 0; }
+#endif
 /*********************************************************************
  *                     FREQUENCY TABLE HELPERS                       *
  *********************************************************************/

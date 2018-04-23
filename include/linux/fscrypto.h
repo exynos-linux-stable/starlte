@@ -18,7 +18,17 @@
 #include <crypto/skcipher.h>
 #include <uapi/linux/fs.h>
 
+#ifdef CONFIG_FS_CRYPTO_SEC_EXTENSION
+#include <linux/fscrypto_sec.h>
+/*
+ * FS_ESTIMATED_NONCE_SIZE and FS_KEY_DERIVATION_NONCE_SIZE
+ * should be defined in fscrypto_sec.h
+ */
+#else
+#define FS_ESTIMATED_NONCE_SIZE			FS_AES_128_ECB_KEY_SIZE
 #define FS_KEY_DERIVATION_NONCE_SIZE		16
+#endif /* CONFIG FS_CRYPTO_SEC_EXTENSION */
+
 #define FS_ENCRYPTION_CONTEXT_FORMAT_V1		1
 
 #define FS_POLICY_FLAGS_PAD_4		0x00
@@ -34,6 +44,9 @@
 #define FS_ENCRYPTION_MODE_AES_256_GCM		2
 #define FS_ENCRYPTION_MODE_AES_256_CBC		3
 #define FS_ENCRYPTION_MODE_AES_256_CTS		4
+
+#define FS_PRIVATE_ENCRYPTION_MODE_AES_256_CBC	126
+#define FS_PRIVATE_ENCRYPTION_MODE_AES_256_XTS	127
 
 /**
  * Encryption context for inode
@@ -176,7 +189,12 @@ static inline bool fscrypt_dummy_context_enabled(struct inode *inode)
 
 static inline bool fscrypt_valid_contents_enc_mode(u32 mode)
 {
+#ifdef CONFIG_FS_PRIVATE_ENCRYPTION
+	return (mode == FS_ENCRYPTION_MODE_AES_256_XTS) ||
+			(mode == FS_PRIVATE_ENCRYPTION_MODE_AES_256_XTS);
+#else
 	return (mode == FS_ENCRYPTION_MODE_AES_256_XTS);
+#endif /* CONFIG_FS_PRIVATE_ENCRYPTION */
 }
 
 static inline bool fscrypt_valid_filenames_enc_mode(u32 mode)
@@ -270,6 +288,11 @@ extern int fscrypt_fname_disk_to_usr(struct inode *, u32, u32,
 			const struct fscrypt_str *, struct fscrypt_str *);
 extern int fscrypt_fname_usr_to_disk(struct inode *, const struct qstr *,
 			struct fscrypt_str *);
+#endif
+
+#ifndef CONFIG_FS_CRYPTO_SEC_EXTENSION
+static inline int __init fscrypt_sec_crypto_init(void) { return 0; }
+static inline void __exit fscrypt_sec_crypto_exit(void) {}
 #endif
 
 /* crypto.c */

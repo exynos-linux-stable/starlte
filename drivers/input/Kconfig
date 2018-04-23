@@ -200,6 +200,38 @@ config INPUT_KEYCOMBO
 	---help---
 	  Say Y here if you want to take action when some keys are pressed;
 
+config HALL
+	tristate "Enable HALL IC"
+	default n
+	help
+	  Say Y here if you want to enable Hall IC Feature
+	  and send a event when cover state is changed.
+	  Active gpio state is low and active event value is 0.
+
+	  If unsure, say N.
+
+config CERTIFY_HALL
+	tristate "Enable CERTIFY HALL IC"
+	default n
+	help
+	  Say Y here if you want to enable Certify Hall IC Feature and
+	  send a event when cover is detected.
+	  Active gpio state is low and active event value is 1.
+
+	  If unsure, say N.
+
+config SEC_AUTO_INPUT
+	tristate "Samsung auto input"
+	depends on !SAMSUNG_PRODUCT_SHIP
+	default y
+	help
+	  Say Y here if you use auto input function.
+
+	  If unsure, say N.
+
+	  To compile this driver as a module, choose M here: the
+	  module will be called autoinput.
+
 comment "Input Device Drivers"
 
 source "drivers/input/keyboard/Kconfig"
@@ -211,6 +243,8 @@ source "drivers/input/joystick/Kconfig"
 source "drivers/input/tablet/Kconfig"
 
 source "drivers/input/touchscreen/Kconfig"
+
+source "drivers/input/wacom/Kconfig"
 
 source "drivers/input/misc/Kconfig"
 

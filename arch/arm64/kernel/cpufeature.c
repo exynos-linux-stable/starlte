@@ -510,6 +510,15 @@ void update_cpu_features(int cpu,
 			 struct cpuinfo_arm64 *boot)
 {
 	int taint = 0;
+	/*
+	 * In Exynos SOC, the sanity check for customized cores is meaningless
+	 * because it consists of non-arm CPUs.
+	 */
+	u32 midr = read_cpuid_id();
+
+	if ((midr & MIDR_MODEL_MASK) == MIDR_MONGOOSE ||
+		((midr & MIDR_MODEL_MASK) == MIDR_MEERKAT))
+		return;
 
 	/*
 	 * The kernel can handle differing I-cache policies, but otherwise

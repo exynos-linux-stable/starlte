@@ -41,6 +41,13 @@ struct exynos_irq_chip {
 	u32 eint_pend;
 };
 
+static unsigned int smpl_irq;
+
+unsigned int get_smpl_irq_num(void)
+{
+	return smpl_irq;
+}
+
 static inline struct exynos_irq_chip *to_exynos_irq_chip(struct irq_chip *chip)
 {
 	return container_of(chip, struct exynos_irq_chip, chip);
@@ -56,6 +63,37 @@ static const struct samsung_pin_bank_type bank_type_alive = {
 	.reg_offset = { 0x00, 0x04, 0x08, 0x0c, },
 };
 
+/* bank type for non-alive type (DRV bit field: 3) */
+static struct samsung_pin_bank_type bank_type_4  = {
+	.fld_width = { 4, 1, 2, 3, 2, 2, },
+	.reg_offset = { 0x00, 0x04, 0x08, 0x0c, 0x10, 0x14, },
+};
+
+/* bank type for alive type (DRV bit field: 3) */
+/*
+static struct samsung_pin_bank_type bank_type_5 = {
+	.fld_width = { 4, 1, 2, 3, },
+	.reg_offset = { 0x00, 0x04, 0x08, 0x0c, },
+};
+*/
+
+/* bank type for non-alive type
+ * (CON bit field: 4, DAT bit field: 1, PUD bit field: 4, DRV bit field: 4)
+ * (CONPDN bit field: 2, PUDPDN bit field: 4)
+ */
+static struct samsung_pin_bank_type bank_type_6  = {
+	.fld_width = { 4, 1, 4, 4, 2, 4, },
+	.reg_offset = { 0x00, 0x04, 0x08, 0x0c, 0x10, 0x14, },
+};
+
+/* bank type for alive type
+ * (CON bit field: 4, DAT bit field: 1, PUD bit field: 4, DRV bit field: 4)
+ */
+static struct samsung_pin_bank_type bank_type_7 = {
+	.fld_width = { 4, 1, 4, 4, },
+	.reg_offset = { 0x00, 0x04, 0x08, 0x0c, },
+};
+
 static void exynos_irq_mask(struct irq_data *irqd)
 {
 	struct irq_chip *chip = irq_data_get_irq_chip(irqd);
@@ -65,6 +103,11 @@ static void exynos_irq_mask(struct irq_data *irqd)
 	unsigned long reg_mask = our_chip->eint_mask + bank->eint_offset;
 	unsigned long mask;
 	unsigned long flags;
+
+#ifdef CONFIG_SOC_EXYNOS9810
+	if (!strncmp(bank->name, "gpg0", 4) && (irqd->hwirq == 3))
+		return;
+#endif
 
 	spin_lock_irqsave(&bank->slock, flags);
 
@@ -291,6 +334,49 @@ struct exynos_eint_gpio_save {
 	u32 eint_fltcon1;
 };
 
+static void exynos_eint_flt_config(int en, int sel, int width,
+				   struct samsung_pinctrl_drv_data *d,
+				   struct samsung_pin_bank *bank)
+{
+	unsigned int flt_reg, flt_con;
+	unsigned int val, shift;
+	int i;
+	int loop_cnt;
+
+	flt_con = 0;
+
+	if (en)
+		flt_con |= EXYNOS_EINT_FLTCON_EN;
+
+	if (sel)
+		flt_con |= EXYNOS_EINT_FLTCON_SEL;
+
+	flt_con |= EXYNOS_EINT_FLTCON_WIDTH(width);
+
+	flt_reg = EXYNOS_GPIO_EFLTCON_OFFSET + bank->fltcon_offset;
+
+	if (bank->nr_pins > 4)
+		/* if nr_pins > 4, we should set FLTCON0 register fully. (pin0 ~ 3) */
+		/* So, we shoud loop 4 times in case of FLTCON0. */
+		loop_cnt = 4;
+	else
+		loop_cnt = bank->nr_pins;
+
+	val = readl(d->virt_base + flt_reg);
+
+	for (i = 0; i < loop_cnt; i++) {
+		shift = i * EXYNOS_EINT_FLTCON_LEN;
+		val &= ~(EXYNOS_EINT_FLTCON_MASK << shift);
+		val |= (flt_con << shift);
+	}
+
+	writel(val, d->virt_base + flt_reg);
+
+	/* if nr_pins > 4, we should also set FLTCON1 register like FLTCON0. (pin4 ~ ) */
+	if (bank->nr_pins > 4)
+		writel(val, d->virt_base + flt_reg + 0x4);
+};
+
 /*
  * exynos_eint_gpio_init() - setup handling of external gpio interrupts.
  * @d: driver data of samsung pinctrl driver.
@@ -335,6 +421,15 @@ static int exynos_eint_gpio_init(struct samsung_pinctrl_drv_data *d)
 		}
 
 		bank->irq_chip = &exynos_gpio_irq_chip;
+
+		/* There is no filter selection register except for alive block */
+		/* Except for alive block, digital filter is default setting */
+		exynos_eint_flt_config(EXYNOS_EINT_FLTCON_EN, 0, 0, d, bank);
+
+#ifdef CONFIG_SOC_EXYNOS9810
+		if (!strncmp(bank->name, "gpg0", 4))
+			smpl_irq = d->irq;
+#endif
 	}
 
 	return 0;
@@ -467,6 +562,25 @@ static void exynos_irq_demux_eint16_31(struct irq_desc *desc)
 	chained_irq_exit(chip, desc);
 }
 
+static int exynos_wkup_irq_map(struct irq_domain *h, unsigned int virq,
+					irq_hw_number_t hw)
+{
+	struct samsung_pin_bank *b = h->host_data;
+
+	irq_set_chip_and_handler(virq, &b->irq_chip->chip,
+					handle_level_irq);
+	irq_set_chip_data(virq, h->host_data);
+	return 0;
+}
+
+/*
+ * irq domain callbacks for external wakeup interrupt controller.
+ */
+static const struct irq_domain_ops exynos_wkup_irqd_ops = {
+	.map	= exynos_wkup_irq_map,
+	.xlate	= irq_domain_xlate_twocell,
+};
+
 /*
  * exynos_eint_wkup_init() - setup handling of external wakeup interrupts.
  * @d: driver data of samsung pinctrl driver.
@@ -502,6 +616,17 @@ static int exynos_eint_wkup_init(struct samsung_pinctrl_drv_data *d)
 	for (i = 0; i < d->nr_banks; ++i, ++bank) {
 		if (bank->eint_type != EINT_TYPE_WKUP)
 			continue;
+
+		if (strncmp(bank->name, "gpa", 3) == 0) {
+			/* Only alive block has filter selection register. */
+			/* Setting Digital Filter */
+			exynos_eint_flt_config(EXYNOS_EINT_FLTCON_EN,
+				EXYNOS_EINT_FLTCON_SEL, 0, d, bank);
+		} else {
+			/* There is no filter selection register except for alive block */
+			/* Except for alive block, digital filter is default setting */
+			exynos_eint_flt_config(EXYNOS_EINT_FLTCON_EN, 0, 0, d, bank);
+		}
 
 		bank->irq_domain = irq_domain_add_linear(bank->of_node,
 				bank->nr_pins, &exynos_eint_irqd_ops, bank);
@@ -581,24 +706,34 @@ static void exynos_pinctrl_suspend_bank(
 
 	save->eint_con = readl(regs + EXYNOS_GPIO_ECON_OFFSET
 						+ bank->eint_offset);
+
 	save->eint_fltcon0 = readl(regs + EXYNOS_GPIO_EFLTCON_OFFSET
-						+ 2 * bank->eint_offset);
-	save->eint_fltcon1 = readl(regs + EXYNOS_GPIO_EFLTCON_OFFSET
-						+ 2 * bank->eint_offset + 4);
+						+ bank->fltcon_offset);
+	if (bank->nr_pins > 4)
+		save->eint_fltcon1 = readl(regs + EXYNOS_GPIO_EFLTCON_OFFSET
+							+ bank->fltcon_offset + 4);
 
 	pr_debug("%s: save     con %#010x\n", bank->name, save->eint_con);
 	pr_debug("%s: save fltcon0 %#010x\n", bank->name, save->eint_fltcon0);
-	pr_debug("%s: save fltcon1 %#010x\n", bank->name, save->eint_fltcon1);
+	if (bank->nr_pins > 4)
+		pr_debug("%s: save fltcon1 %#010x\n", bank->name, save->eint_fltcon1);
 }
 
 static void exynos_pinctrl_suspend(struct samsung_pinctrl_drv_data *drvdata)
 {
 	struct samsung_pin_bank *bank = drvdata->pin_banks;
+	struct samsung_pinctrl_drv_data *d = bank->drvdata;
 	int i;
 
 	for (i = 0; i < drvdata->nr_banks; ++i, ++bank)
 		if (bank->eint_type == EINT_TYPE_GPIO)
 			exynos_pinctrl_suspend_bank(drvdata, bank);
+		else if (bank->eint_type == EINT_TYPE_WKUP ||
+			bank->eint_type == EINT_TYPE_WKUP_MUX) {
+			/* Setting Analog Filter */
+			exynos_eint_flt_config(EXYNOS_EINT_FLTCON_EN,
+					0, 0, d, bank);
+		}
 }
 
 static void exynos_pinctrl_resume_bank(
@@ -613,27 +748,49 @@ static void exynos_pinctrl_resume_bank(
 			+ bank->eint_offset), save->eint_con);
 	pr_debug("%s: fltcon0 %#010x => %#010x\n", bank->name,
 			readl(regs + EXYNOS_GPIO_EFLTCON_OFFSET
-			+ 2 * bank->eint_offset), save->eint_fltcon0);
-	pr_debug("%s: fltcon1 %#010x => %#010x\n", bank->name,
-			readl(regs + EXYNOS_GPIO_EFLTCON_OFFSET
-			+ 2 * bank->eint_offset + 4), save->eint_fltcon1);
+			+ bank->fltcon_offset), save->eint_fltcon0);
+	if (bank->nr_pins > 4) {
+		pr_debug("%s: fltcon1 %#010x => %#010x\n", bank->name,
+				readl(regs + EXYNOS_GPIO_EFLTCON_OFFSET
+				+ bank->fltcon_offset + 4), save->eint_fltcon1);
+	}
 
 	writel(save->eint_con, regs + EXYNOS_GPIO_ECON_OFFSET
 						+ bank->eint_offset);
 	writel(save->eint_fltcon0, regs + EXYNOS_GPIO_EFLTCON_OFFSET
-						+ 2 * bank->eint_offset);
-	writel(save->eint_fltcon1, regs + EXYNOS_GPIO_EFLTCON_OFFSET
-						+ 2 * bank->eint_offset + 4);
+							+ bank->fltcon_offset);
+	if (bank->nr_pins > 4) {
+		writel(save->eint_fltcon1, regs + EXYNOS_GPIO_EFLTCON_OFFSET
+							+ bank->fltcon_offset + 4);
+	}
 }
 
 static void exynos_pinctrl_resume(struct samsung_pinctrl_drv_data *drvdata)
 {
 	struct samsung_pin_bank *bank = drvdata->pin_banks;
+	struct samsung_pinctrl_drv_data *d = bank->drvdata;
 	int i;
 
-	for (i = 0; i < drvdata->nr_banks; ++i, ++bank)
-		if (bank->eint_type == EINT_TYPE_GPIO)
+	for (i = 0; i < drvdata->nr_banks; ++i, ++bank) {
+		if (bank->eint_type == EINT_TYPE_GPIO) {
 			exynos_pinctrl_resume_bank(drvdata, bank);
+		} else if (bank->eint_type == EINT_TYPE_WKUP ||
+			bank->eint_type == EINT_TYPE_WKUP_MUX) {
+			/* Only alive block(gpa) has filter selection register. */
+			if (strncmp(bank->name, "gpa", 3) == 0) {
+				/* Setting Digital Filter */
+				exynos_eint_flt_config(EXYNOS_EINT_FLTCON_EN,
+						EXYNOS_EINT_FLTCON_SEL, 0, d, bank);
+			} else {
+				/*
+				 * There is no filter selection register except for alive block.
+				 * Except for alive block, digital filter is default setting
+				 * without any setting.
+				 */
+				exynos_eint_flt_config(EXYNOS_EINT_FLTCON_EN, 0, 0, d, bank);
+			}
+		}
+	}
 }
 
 /* pin banks of s5pv210 pin-controller */
@@ -1621,3 +1778,306 @@ const struct samsung_pin_ctrl exynos7_pin_ctrl[] __initconst = {
 		.eint_gpio_init = exynos_eint_gpio_init,
 	},
 };
+
+/* pin banks of exynos8895 pin-controller 0 (ALIVE) */
+static struct samsung_pin_bank_data exynos8895_pin_banks0[] = {
+	EXYNOS8_PIN_BANK_EINTW(bank_type_alive, 6, 0x000, "etc1", 0x20),
+	EXYNOS8_PIN_BANK_EINTW(bank_type_alive, 8, 0x020, "gpa0", 0x00),
+	EXYNOS8_PIN_BANK_EINTW(bank_type_alive, 8, 0x040, "gpa1", 0x04),
+	EXYNOS8_PIN_BANK_EINTW(bank_type_alive, 8, 0x060, "gpa2", 0x08),
+	EXYNOS8_PIN_BANK_EINTW(bank_type_alive, 8, 0x080, "gpa3", 0x0c),
+	EXYNOS8_PIN_BANK_EINTW(bank_type_alive, 7, 0x0A0, "gpa4", 0x24),
+};
+
+/* pin banks of exynos8895 pin-controller 1 (ABOX) */
+static struct samsung_pin_bank_data exynos8895_pin_banks1[] = {
+	EXYNOS8_PIN_BANK_EINTG(bank_type_off, 8, 0x000, "gph0", 0x00),
+	EXYNOS8_PIN_BANK_EINTG(bank_type_off, 7, 0x020, "gph1", 0x04),
+	EXYNOS8_PIN_BANK_EINTG(bank_type_off, 4, 0x040, "gph3", 0x08),
+};
+
+/* pin banks of exynos8895 pin-controller 2 (VTS) */
+static struct samsung_pin_bank_data exynos8895_pin_banks2[] = {
+	EXYNOS8_PIN_BANK_EINTG(bank_type_off, 3, 0x000, "gph2", 0x00),
+};
+
+/* pin banks of exynos8895 pin-controller 3 (FSYS0) */
+static struct samsung_pin_bank_data exynos8895_pin_banks3[] = {
+	EXYNOS8_PIN_BANK_EINTG(bank_type_4, 3, 0x000, "gpi0", 0x00),
+	EXYNOS8_PIN_BANK_EINTG(bank_type_4, 8, 0x020, "gpi1", 0x04),
+};
+
+/* pin banks of exynos8895 pin-controller 4 (FSYS1) */
+static struct samsung_pin_bank_data exynos8895_pin_banks4[] = {
+	EXYNOS8_PIN_BANK_EINTG(bank_type_off, 8, 0x000, "gpj1", 0x00),
+	EXYNOS8_PIN_BANK_EINTG(bank_type_off, 7, 0x020, "gpj0", 0x04),
+};
+
+/* pin banks of exynos8895 pin-controller 5 (BUSC) */
+static struct samsung_pin_bank_data exynos8895_pin_banks5[] = {
+	EXYNOS8_PIN_BANK_EINTG(bank_type_off, 2, 0x000, "gpb2", 0x00),
+};
+
+/* pin banks of exynos8895 pin-controller 6 (PERIC0) */
+static struct samsung_pin_bank_data exynos8895_pin_banks6[] = {
+	EXYNOS8_PIN_BANK_EINTG(bank_type_off, 8, 0x000, "gpd0", 0x00),
+	EXYNOS8_PIN_BANK_EINTG(bank_type_off, 8, 0x020, "gpd1", 0x04),
+	EXYNOS8_PIN_BANK_EINTG(bank_type_off, 4, 0x040, "gpd2", 0x08),
+	EXYNOS8_PIN_BANK_EINTG(bank_type_off, 5, 0x060, "gpd3", 0x0C),
+	EXYNOS8_PIN_BANK_EINTG(bank_type_off, 4, 0x080, "gpb1", 0x10),
+	EXYNOS8_PIN_BANK_EINTG(bank_type_off, 8, 0x0A0, "gpe7", 0x14),
+	EXYNOS8_PIN_BANK_EINTG(bank_type_off, 8, 0x0C0, "gpf1", 0x18),
+};
+
+/* pin banks of exynos8895 pin-controller 7 (PERIC1) */
+static struct samsung_pin_bank_data exynos8895_pin_banks7[] = {
+	EXYNOS8_PIN_BANK_EINTG(bank_type_off, 3, 0x000, "gpb0", 0x00),
+	EXYNOS8_PIN_BANK_EINTG(bank_type_off, 5, 0x020, "gpc0", 0x04),
+	EXYNOS8_PIN_BANK_EINTG(bank_type_off, 5, 0x040, "gpc1", 0x08),
+	EXYNOS8_PIN_BANK_EINTG(bank_type_off, 8, 0x060, "gpc2", 0x0C),
+	EXYNOS8_PIN_BANK_EINTG(bank_type_off, 8, 0x080, "gpc3", 0x10),
+	EXYNOS8_PIN_BANK_EINTG(bank_type_off, 4, 0x0A0, "gpk0", 0x14),
+	EXYNOS8_PIN_BANK_EINTG(bank_type_off, 8, 0x0C0, "gpe5", 0x18),
+	EXYNOS8_PIN_BANK_EINTG(bank_type_off, 8, 0x0e0, "gpe6", 0x1C),
+	EXYNOS8_PIN_BANK_EINTG(bank_type_off, 8, 0x100, "gpe2", 0x20),
+	EXYNOS8_PIN_BANK_EINTG(bank_type_off, 8, 0x120, "gpe3", 0x24),
+	EXYNOS8_PIN_BANK_EINTG(bank_type_off, 8, 0x140, "gpe4", 0x28),
+	EXYNOS8_PIN_BANK_EINTG(bank_type_off, 4, 0x160, "gpf0", 0x2C),
+	EXYNOS8_PIN_BANK_EINTG(bank_type_off, 8, 0x180, "gpe1", 0x30),
+	EXYNOS8_PIN_BANK_EINTG(bank_type_off, 2, 0x1A0, "gpg0", 0x34),
+};
+
+const struct samsung_pin_ctrl exynos8895_pin_ctrl[] = {
+	{
+		/* pin-controller instance 0 Alive data */
+		.pin_banks	= exynos8895_pin_banks0,
+		.nr_banks	= ARRAY_SIZE(exynos8895_pin_banks0),
+		.eint_gpio_init = exynos_eint_gpio_init,
+		.eint_wkup_init = exynos_eint_wkup_init,
+		.suspend	= exynos_pinctrl_suspend,
+		.resume		= exynos_pinctrl_resume,
+	}, {
+		/* pin-controller instance 1 ABOX data */
+		.pin_banks	= exynos8895_pin_banks1,
+		.nr_banks	= ARRAY_SIZE(exynos8895_pin_banks1),
+	}, {
+		/* pin-controller instance 2 VTS data */
+		.pin_banks	= exynos8895_pin_banks2,
+		.nr_banks	= ARRAY_SIZE(exynos8895_pin_banks2),
+		/*
+		* When suspend callback function of syscore_ops is called
+		* from suspend framework, some power domains can be already
+		* power downed. At this moment, VTS block is power downed
+		* before samsung_pinctrl_suspend() is called. So, to avoid
+		* error, suspend/resume callback is temporally removed.
+		*
+		*.suspend	= exynos_pinctrl_suspend,
+		*.resume	= exynos_pinctrl_resume,
+		*/
+	}, {
+		/* pin-controller instance 3 FSYS0 data */
+		.pin_banks	= exynos8895_pin_banks3,
+		.nr_banks	= ARRAY_SIZE(exynos8895_pin_banks3),
+		.eint_gpio_init = exynos_eint_gpio_init,
+		.suspend	= exynos_pinctrl_suspend,
+		.resume		= exynos_pinctrl_resume,
+	}, {
+		/* pin-controller instance 4 FSYS1 data */
+		.pin_banks	= exynos8895_pin_banks4,
+		.nr_banks	= ARRAY_SIZE(exynos8895_pin_banks4),
+		.eint_gpio_init = exynos_eint_gpio_init,
+		.suspend	= exynos_pinctrl_suspend,
+		.resume		= exynos_pinctrl_resume,
+	}, {
+		/* pin-controller instance 5 BUSC data */
+		.pin_banks	= exynos8895_pin_banks5,
+		.nr_banks	= ARRAY_SIZE(exynos8895_pin_banks5),
+		.eint_gpio_init = exynos_eint_gpio_init,
+		.suspend	= exynos_pinctrl_suspend,
+		.resume		= exynos_pinctrl_resume,
+	}, {
+		/* pin-controller instance 6 PERIC0 data */
+		.pin_banks	= exynos8895_pin_banks6,
+		.nr_banks	= ARRAY_SIZE(exynos8895_pin_banks6),
+		.eint_gpio_init = exynos_eint_gpio_init,
+		.suspend	= exynos_pinctrl_suspend,
+		.resume		= exynos_pinctrl_resume,
+	}, {
+		/* pin-controller instance 7 PERIC1 data */
+		.pin_banks	= exynos8895_pin_banks7,
+		.nr_banks	= ARRAY_SIZE(exynos8895_pin_banks7),
+		.eint_gpio_init = exynos_eint_gpio_init,
+		.suspend	= exynos_pinctrl_suspend,
+		.resume		= exynos_pinctrl_resume,
+	},
+};
+
+/* pin banks of exynos9810 pin-controller 0 (ALIVE) */
+static struct samsung_pin_bank_data exynos9810_pin_banks0[] = {
+	EXYNOS8_PIN_BANK_EINTN(bank_type_7, 6, 0x000, "etc1"),
+	EXYNOS9_PIN_BANK_EINTW(bank_type_7, 8, 0x020, "gpa0", 0x00, 0x00),
+	EXYNOS9_PIN_BANK_EINTW(bank_type_7, 8, 0x040, "gpa1", 0x04, 0x08),
+	EXYNOS9_PIN_BANK_EINTW(bank_type_7, 8, 0x060, "gpa2", 0x08, 0x10),
+	EXYNOS9_PIN_BANK_EINTW(bank_type_7, 8, 0x080, "gpa3", 0x0c, 0x18),
+	EXYNOS8_PIN_BANK_EINTN(bank_type_7, 6, 0x0A0, "gpq0"),
+	EXYNOS9_PIN_BANK_EINTW(bank_type_7, 2, 0x0C0, "gpa4", 0x10, 0x20),
+};
+
+/* pin banks of exynos9810 pin-controller 1 (AUD) */
+static struct samsung_pin_bank_data exynos9810_pin_banks1[] = {
+	EXYNOS9_PIN_BANK_EINTG(bank_type_6, 5, 0x000, "gpb0", 0x00, 0x00),
+	EXYNOS9_PIN_BANK_EINTG(bank_type_6, 8, 0x020, "gpb1", 0x04, 0x08),
+	EXYNOS9_PIN_BANK_EINTG(bank_type_6, 4, 0x040, "gpb2", 0x08, 0x10),
+};
+
+/* pin banks of exynos9810 pin-controller 2 (CHUB) */
+static struct samsung_pin_bank_data exynos9810_pin_banks2[] = {
+	EXYNOS9_PIN_BANK_EINTG(bank_type_6, 8, 0x000, "gph0", 0x00, 0x00),
+	EXYNOS9_PIN_BANK_EINTG(bank_type_6, 5, 0x020, "gph1", 0x04, 0x08),
+};
+
+/* pin banks of exynos9810 pin-controller 3 (CMGP) */
+static struct samsung_pin_bank_data exynos9810_pin_banks3[] = {
+	EXYNOS9_PIN_BANK_EINTW(bank_type_7, 1, 0x000, "gpm0", 0x00, 0x00),
+	EXYNOS9_PIN_BANK_EINTW(bank_type_7, 1, 0x020, "gpm1", 0x04, 0x04),
+	EXYNOS9_PIN_BANK_EINTW(bank_type_7, 1, 0x040, "gpm2", 0x08, 0x08),
+	EXYNOS9_PIN_BANK_EINTW(bank_type_7, 1, 0x060, "gpm3", 0x0C, 0x0C),
+	EXYNOS9_PIN_BANK_EINTW(bank_type_7, 1, 0x080, "gpm4", 0x10, 0x10),
+	EXYNOS9_PIN_BANK_EINTW(bank_type_7, 1, 0x0A0, "gpm5", 0x14, 0x14),
+	EXYNOS9_PIN_BANK_EINTW(bank_type_7, 1, 0x0C0, "gpm6", 0x18, 0x18),
+	EXYNOS9_PIN_BANK_EINTW(bank_type_7, 1, 0x0E0, "gpm7", 0x1C, 0x1C),
+	EXYNOS9_PIN_BANK_EINTW(bank_type_7, 1, 0x100, "gpm10", 0x20, 0x20),
+	EXYNOS9_PIN_BANK_EINTW(bank_type_7, 1, 0x120, "gpm11", 0x24, 0x24),
+	EXYNOS9_PIN_BANK_EINTW(bank_type_7, 1, 0x140, "gpm12", 0x28, 0x28),
+	EXYNOS9_PIN_BANK_EINTW(bank_type_7, 1, 0x160, "gpm13", 0x2C, 0x2C),
+	EXYNOS9_PIN_BANK_EINTW(bank_type_7, 1, 0x180, "gpm14", 0x30, 0x30),
+	EXYNOS9_PIN_BANK_EINTW(bank_type_7, 1, 0x1A0, "gpm15", 0x34, 0x34),
+	EXYNOS9_PIN_BANK_EINTW(bank_type_7, 1, 0x1C0, "gpm16", 0x38, 0x38),
+	EXYNOS9_PIN_BANK_EINTW(bank_type_7, 1, 0x1E0, "gpm17", 0x3C, 0x3C),
+	EXYNOS9_PIN_BANK_EINTW(bank_type_7, 1, 0x200, "gpm40", 0x40, 0x40),
+	EXYNOS9_PIN_BANK_EINTW(bank_type_7, 1, 0x220, "gpm41", 0x44, 0x44),
+	EXYNOS9_PIN_BANK_EINTW(bank_type_7, 1, 0x240, "gpm42", 0x48, 0x48),
+	EXYNOS9_PIN_BANK_EINTW(bank_type_7, 1, 0x260, "gpm43", 0x4C, 0x4C),
+};
+
+/* pin banks of exynos9810 pin-controller 4 (FSYS0) */
+static struct samsung_pin_bank_data exynos9810_pin_banks4[] = {
+	EXYNOS9_PIN_BANK_EINTG(bank_type_6, 2, 0x000, "gpf0", 0x00, 0x00),
+};
+
+/* pin banks of exynos9810 pin-controller 5 (FSYS1) */
+static struct samsung_pin_bank_data exynos9810_pin_banks5[] = {
+	EXYNOS9_PIN_BANK_EINTG(bank_type_6, 7, 0x000, "gpf1", 0x00, 0x00),
+	EXYNOS9_PIN_BANK_EINTG(bank_type_6, 6, 0x020, "gpf2", 0x04, 0x08),
+};
+
+/* pin banks of exynos9810 pin-controller 6 (PERIC0) */
+static struct samsung_pin_bank_data exynos9810_pin_banks6[] = {
+	EXYNOS9_PIN_BANK_EINTG(bank_type_6, 8, 0x000, "gpp0", 0x00, 0x00),
+	EXYNOS9_PIN_BANK_EINTG(bank_type_6, 8, 0x020, "gpp1", 0x04, 0x08),
+	EXYNOS9_PIN_BANK_EINTG(bank_type_6, 8, 0x040, "gpp2", 0x08, 0x10),
+	EXYNOS9_PIN_BANK_EINTG(bank_type_6, 4, 0x060, "gpp3", 0x0C, 0x18),
+	EXYNOS9_PIN_BANK_EINTG(bank_type_6, 8, 0x080, "gpg0", 0x10, 0x1C),
+	EXYNOS9_PIN_BANK_EINTG(bank_type_6, 8, 0x0A0, "gpg1", 0x14, 0x24),
+	EXYNOS9_PIN_BANK_EINTG(bank_type_6, 8, 0x0C0, "gpg2", 0x18, 0x2C),
+};
+
+/* pin banks of exynos9810 pin-controller 7 (PERIC1) */
+static struct samsung_pin_bank_data exynos9810_pin_banks7[] = {
+	EXYNOS9_PIN_BANK_EINTG(bank_type_6, 8, 0x000, "gpp4", 0x00, 0x00),
+	EXYNOS9_PIN_BANK_EINTG(bank_type_6, 8, 0x020, "gpp5", 0x04, 0x08),
+	EXYNOS9_PIN_BANK_EINTG(bank_type_6, 4, 0x040, "gpp6", 0x08, 0x10),
+	EXYNOS9_PIN_BANK_EINTG(bank_type_6, 8, 0x060, "gpc0", 0x0C, 0x14),
+	EXYNOS9_PIN_BANK_EINTG(bank_type_6, 8, 0x080, "gpc1", 0x10, 0x1C),
+	EXYNOS9_PIN_BANK_EINTG(bank_type_6, 4, 0x0A0, "gpd0", 0x14, 0x24),
+	EXYNOS9_PIN_BANK_EINTG(bank_type_6, 7, 0x0C0, "gpg3", 0x18, 0x28),
+};
+
+/* pin banks of exynos9810 pin-controller 8 (VTS) */
+static struct samsung_pin_bank_data exynos9810_pin_banks8[] = {
+	EXYNOS9_PIN_BANK_EINTG(bank_type_6, 3, 0x000, "gpt0", 0x00, 0x00),
+};
+
+const struct samsung_pin_ctrl exynos9810_pin_ctrl[] = {
+	{
+		/* pin-controller instance 0 ALIVE data */
+		.pin_banks	= exynos9810_pin_banks0,
+		.nr_banks	= ARRAY_SIZE(exynos9810_pin_banks0),
+		.eint_gpio_init = exynos_eint_gpio_init,
+		.eint_wkup_init = exynos_eint_wkup_init,
+		.suspend	= exynos_pinctrl_suspend,
+		.resume		= exynos_pinctrl_resume,
+	}, {
+		/* pin-controller instance 1 AUD data */
+		.pin_banks	= exynos9810_pin_banks1,
+		.nr_banks	= ARRAY_SIZE(exynos9810_pin_banks1),
+		//.eint_gpio_init = exynos_eint_gpio_init,
+		//.suspend	= exynos_pinctrl_suspend,
+		//.resume	= exynos_pinctrl_resume,
+	}, {
+		/* pin-controller instance 2 CHUB data */
+		.pin_banks	= exynos9810_pin_banks2,
+		.nr_banks	= ARRAY_SIZE(exynos9810_pin_banks2),
+		.eint_gpio_init = exynos_eint_gpio_init,
+		.suspend	= exynos_pinctrl_suspend,
+		.resume		= exynos_pinctrl_resume,
+	}, {
+		/* pin-controller instance 3 CMGP data */
+		.pin_banks	= exynos9810_pin_banks3,
+		.nr_banks	= ARRAY_SIZE(exynos9810_pin_banks3),
+		.eint_gpio_init = exynos_eint_gpio_init,
+		.eint_wkup_init = exynos_eint_wkup_init,
+		.suspend	= exynos_pinctrl_suspend,
+		.resume		= exynos_pinctrl_resume,
+	}, {
+		/* pin-controller instance 4 FSYS0 data */
+		.pin_banks	= exynos9810_pin_banks4,
+		.nr_banks	= ARRAY_SIZE(exynos9810_pin_banks4),
+		.eint_gpio_init = exynos_eint_gpio_init,
+		.suspend	= exynos_pinctrl_suspend,
+		.resume		= exynos_pinctrl_resume,
+	}, {
+		/* pin-controller instance 5 FSYS1 data */
+		.pin_banks	= exynos9810_pin_banks5,
+		.nr_banks	= ARRAY_SIZE(exynos9810_pin_banks5),
+		.eint_gpio_init = exynos_eint_gpio_init,
+		.suspend	= exynos_pinctrl_suspend,
+		.resume		= exynos_pinctrl_resume,
+	}, {
+		/* pin-controller instance 6 PERIC0 data */
+		.pin_banks	= exynos9810_pin_banks6,
+		.nr_banks	= ARRAY_SIZE(exynos9810_pin_banks6),
+		.eint_gpio_init = exynos_eint_gpio_init,
+		.suspend	= exynos_pinctrl_suspend,
+		.resume		= exynos_pinctrl_resume,
+	}, {
+		/* pin-controller instance 7 PERIC1 data */
+		.pin_banks	= exynos9810_pin_banks7,
+		.nr_banks	= ARRAY_SIZE(exynos9810_pin_banks7),
+		.eint_gpio_init = exynos_eint_gpio_init,
+		.suspend	= exynos_pinctrl_suspend,
+		.resume		= exynos_pinctrl_resume,
+	}, {
+		/* pin-controller instance 8 VTS data */
+		.pin_banks	= exynos9810_pin_banks8,
+		.nr_banks	= ARRAY_SIZE(exynos9810_pin_banks8),
+		//.eint_gpio_init = exynos_eint_gpio_init,
+		//.suspend	= exynos_pinctrl_suspend,
+		//.resume	= exynos_pinctrl_resume,
+	},
+};
+
+#ifdef CONFIG_SEC_GPIO_DVS
+int exynos9810_secgpio_get_nr_gpio(void)
+{
+	int i, j;
+	int nr_gpio = 0;
+
+	for (i = 0; i < ARRAY_SIZE(exynos9810_pin_ctrl); i++) {
+		for (j = 0; j < exynos9810_pin_ctrl[i].nr_banks; j++)
+			nr_gpio += exynos9810_pin_ctrl[i].pin_banks[j].nr_pins;
+	}
+
+	return nr_gpio;
+}
+#endif /* CONFIG_SEC_GPIO_DVS */

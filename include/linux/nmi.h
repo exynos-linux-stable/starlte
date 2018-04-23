@@ -33,6 +33,10 @@
  */
 #if defined(CONFIG_HAVE_NMI_WATCHDOG) || defined(CONFIG_HARDLOCKUP_DETECTOR)
 #include <asm/nmi.h>
+#endif
+
+#if defined(CONFIG_HAVE_NMI_WATCHDOG) || defined(CONFIG_HARDLOCKUP_DETECTOR) \
+	|| defined(CONFIG_HARDLOCKUP_DETECTOR_OTHER_CPU)
 extern void touch_nmi_watchdog(void);
 #else
 static inline void touch_nmi_watchdog(void)
@@ -41,7 +45,7 @@ static inline void touch_nmi_watchdog(void)
 }
 #endif
 
-#if defined(CONFIG_HARDLOCKUP_DETECTOR)
+#if defined(CONFIG_HARDLOCKUP_DETECTOR) || defined(CONFIG_HARDLOCKUP_DETECTOR_OTHER_CPU)
 extern void hardlockup_detector_disable(void);
 #else
 static inline void hardlockup_detector_disable(void) {}
@@ -102,7 +106,7 @@ static inline bool trigger_single_cpu_backtrace(int cpu)
 }
 #endif
 
-#ifdef CONFIG_LOCKUP_DETECTOR
+#if defined(CONFIG_LOCKUP_DETECTOR) || defined(CONFIG_HARDLOCKUP_DETECTOR_OTHER_CPU)
 u64 hw_nmi_get_sample_period(int watchdog_thresh);
 extern int nmi_watchdog_enabled;
 extern int soft_watchdog_enabled;

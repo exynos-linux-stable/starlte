@@ -231,6 +231,14 @@ static inline void *phys_to_virt(phys_addr_t x)
 #define virt_addr_valid(kaddr)		(_virt_addr_is_linear(kaddr) && \
 					 _virt_addr_valid(kaddr))
 
+#define ZONE_MOVABLE_SIZE_BYTES	0
+
+#if defined(CONFIG_ZONE_MOVABLE) && defined(CONFIG_ZONE_MOVABLE_SIZE_MBYTES) \
+					&& (CONFIG_ZONE_MOVABLE_SIZE_MBYTES > 0)
+#undef ZONE_MOVABLE_SIZE_BYTES
+#define ZONE_MOVABLE_SIZE_BYTES	((u32)(CONFIG_ZONE_MOVABLE_SIZE_MBYTES << 20))
+#endif
+
 #include <asm-generic/memory_model.h>
 
 #endif

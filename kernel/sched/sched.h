@@ -36,6 +36,7 @@ extern atomic_long_t calc_load_tasks;
 
 extern void calc_global_load_tick(struct rq *this_rq);
 extern long calc_load_fold_active(struct rq *this_rq, long adjust);
+extern void set_rq_online(struct rq *rq);
 
 #ifdef CONFIG_SMP
 extern void cpu_load_update_active(struct rq *this_rq);
@@ -88,6 +89,43 @@ static inline void update_idle_core(struct rq *rq) { }
  *
  */
 #define NICE_0_LOAD		(1L << NICE_0_LOAD_SHIFT)
+
+/*
+ * Signed add and clamp on underflow.
+ *
+ * Explicitly do a load-store to ensure the intermediate value never hits
+ * memory. This allows lockless observations without ever seeing the negative
+ * values.
+ */
+#define add_positive(_ptr, _val) do {                           \
+	typeof(_ptr) ptr = (_ptr);                              \
+	typeof(_val) val = (_val);                              \
+	typeof(*ptr) res, var = READ_ONCE(*ptr);                \
+								\
+	res = var + val;                                        \
+								\
+	if (val < 0 && res > var)                               \
+		res = 0;                                        \
+								\
+	WRITE_ONCE(*ptr, res);                                  \
+} while (0)
+
+/*
+ * Unsigned subtract and clamp on underflow.
+ *
+ * Explicitly do a load-store to ensure the intermediate value never hits
+ * memory. This allows lockless observations without ever seeing the negative
+ * values.
+ */
+#define sub_positive(_ptr, _val) do {				\
+	typeof(_ptr) ptr = (_ptr);				\
+	typeof(*ptr) val = (_val);				\
+	typeof(*ptr) res, var = READ_ONCE(*ptr);		\
+	res = var - val;					\
+	if (res > var)						\
+		res = 0;					\
+	WRITE_ONCE(*ptr, res);					\
+} while (0)
 
 /*
  * Single value that decides SCHED_DEADLINE internal math precision.
@@ -362,6 +400,16 @@ extern void sched_move_task(struct task_struct *tsk);
 #ifdef CONFIG_FAIR_GROUP_SCHED
 extern int sched_group_set_shares(struct task_group *tg, unsigned long shares);
 
+#ifdef CONFIG_RT_GROUP_SCHED
+#ifdef CONFIG_SMP
+extern void set_task_rq_rt(struct sched_rt_entity *rt_se,
+			    struct rt_rq *prev, struct rt_rq *next);
+#else /* !CONFIG_SMP */
+static inline void set_task_rq_rt(struct sched_rt_entity *rt_se,
+				struct rt_rq *prev, struct rt_rq *next) { }
+#endif /* CONFIG_SMP */
+#endif /* CONFIG_RT_GROUP_SCHED */
+
 #ifdef CONFIG_SMP
 extern void set_task_rq_fair(struct sched_entity *se,
 			     struct cfs_rq *prev, struct cfs_rq *next);
@@ -490,6 +538,11 @@ struct rt_rq {
 	unsigned long rt_nr_total;
 	int overloaded;
 	struct plist_head pushable_tasks;
+	struct sched_avg avg;
+	struct sched_rt_entity *curr;
+	atomic_long_t removed_util_avg;
+	atomic_long_t removed_load_avg;
+
 #ifdef HAVE_RT_PUSH_IPI
 	int push_flags;
 	int push_cpu;
@@ -510,6 +563,10 @@ struct rt_rq {
 
 	struct rq *rq;
 	struct task_group *tg;
+	unsigned long propagate_avg;
+#ifndef CONFIG_64BIT
+	u64 load_last_update_time_copy;
+#endif
 #endif
 };
 
@@ -546,6 +603,8 @@ struct dl_rq {
 #else
 	struct dl_bw dl_bw;
 #endif
+	/* This is the "average utilization" for this runqueue */
+	s64 avg_bw;
 };
 
 #ifdef CONFIG_SMP
@@ -683,6 +742,7 @@ struct rq {
 
 	unsigned long cpu_capacity;
 	unsigned long cpu_capacity_orig;
+	unsigned long cpu_capacity_margin;
 
 	struct callback_head *balance_callback;
 
@@ -704,6 +764,13 @@ struct rq {
 
 	/* This is used to determine avg_idle's max value */
 	u64 max_idle_balance_cost;
+
+#ifdef CONFIG_SCHED_HMP
+	struct task_struct *migrate_task;
+	u64 hmp_last_up_migration;
+	u64 hmp_last_down_migration;
+#endif
+
 #endif
 
 #ifdef CONFIG_SCHED_WALT
@@ -729,6 +796,9 @@ struct rq {
 	u64 irqload_ts;
 #endif /* CONFIG_SCHED_WALT */
 
+#ifdef CONFIG_SCHED_EHMP
+	bool ontime_migrating;
+#endif
 
 #ifdef CONFIG_IRQ_TIME_ACCOUNTING
 	u64 prev_irq_time;
@@ -783,6 +853,12 @@ struct rq {
 	int idle_state_idx;
 #endif
 };
+
+#ifdef CONFIG_SCHEDSTATS
+extern void set_schedstats(bool enabled);
+#else
+static inline void set_scedstats(bool enabled) { }
+#endif
 
 static inline int cpu_of(struct rq *rq)
 {
@@ -993,15 +1069,27 @@ extern int group_balance_cpu(struct sched_group *sg);
 
 #if defined(CONFIG_SCHED_DEBUG) && defined(CONFIG_SYSCTL)
 void register_sched_domain_sysctl(void);
+void dirty_sched_domain_sysctl(int cpu);
 void unregister_sched_domain_sysctl(void);
 #else
 static inline void register_sched_domain_sysctl(void)
+{
+}
+static inline void dirty_sched_domain_sysctl(void)
 {
 }
 static inline void unregister_sched_domain_sysctl(void)
 {
 }
 #endif
+
+#ifdef CONFIG_SCHED_HMP
+#define MOVETASK_ONEPATH
+
+static LIST_HEAD(hmp_domains);
+DECLARE_PER_CPU(struct hmp_domain *, hmp_cpu_domain);
+#define hmp_cpu_domain(cpu)	(per_cpu(hmp_cpu_domain, (cpu)))
+#endif /* CONFIG_SCHED_HMP */
 
 #else
 
@@ -1046,6 +1134,7 @@ static inline void set_task_rq(struct task_struct *p, unsigned int cpu)
 #endif
 
 #ifdef CONFIG_RT_GROUP_SCHED
+	set_task_rq_rt(&p->rt, p->rt.rt_rq, tg->rt_rq[cpu]);
 	p->rt.rt_rq  = tg->rt_rq[cpu];
 	p->rt.parent = tg->rt_se[cpu];
 #endif
@@ -1133,6 +1222,16 @@ static inline u64 global_rt_runtime(void)
 		return RUNTIME_INF;
 
 	return (u64)sysctl_sched_rt_runtime * NSEC_PER_USEC;
+}
+
+#define rt_entity_is_task(rt_se) (!(rt_se)->my_q)
+
+static inline struct task_struct *rt_task_of(struct sched_rt_entity *rt_se)
+{
+#ifdef CONFIG_SCHED_DEBUG
+	WARN_ON_ONCE(!rt_entity_is_task(rt_se));
+#endif
+	return container_of(rt_se, struct task_struct, rt);
 }
 
 static inline int task_current(struct rq *rq, struct task_struct *p)
@@ -1228,6 +1327,7 @@ static inline void finish_lock_switch(struct rq *rq, struct task_struct *prev)
 
 extern const int sched_prio_to_weight[40];
 extern const u32 sched_prio_to_wmult[40];
+extern const int rtprio_to_weight[51];
 
 /*
  * {de,en}queue flags:
@@ -1357,7 +1457,12 @@ extern const struct sched_class idle_sched_class;
 extern void init_max_cpu_capacity(struct max_cpu_capacity *mcc);
 extern void update_group_capacity(struct sched_domain *sd, int cpu);
 
+#ifdef CONFIG_SCHED_HMP
+extern void trigger_load_balance(struct rq *rq, int cpu);
+#else
 extern void trigger_load_balance(struct rq *rq);
+#endif
+
 
 extern void set_cpus_allowed_common(struct task_struct *p, const struct cpumask *new_mask);
 
@@ -1428,6 +1533,7 @@ extern void init_dl_task_timer(struct sched_dl_entity *dl_se);
 unsigned long to_ratio(u64 period, u64 runtime);
 
 extern void init_entity_runnable_average(struct sched_entity *se);
+extern void init_rt_entity_runnable_average(struct sched_rt_entity *rt_se);
 extern void post_init_entity_util_avg(struct sched_entity *se);
 
 #ifdef CONFIG_NO_HZ_FULL
@@ -1602,17 +1708,22 @@ static inline unsigned long capacity_orig_of(int cpu)
 	return cpu_rq(cpu)->cpu_capacity_orig;
 }
 
+static inline unsigned long capacity_margin_of(int cpu)
+{
+	return cpu_rq(cpu)->cpu_capacity_margin;
+}
+
 extern unsigned int sysctl_sched_use_walt_cpu_util;
 extern unsigned int walt_ravg_window;
 extern unsigned int walt_disabled;
 
 /*
- * cpu_util returns the amount of capacity of a CPU that is used by CFS
+ * cpu_util returns the amount of capacity of a CPU that is used by all classes
  * tasks. The unit of the return value must be the one of capacity so we can
  * compare the utilization with the capacity of the CPU that is available for
- * CFS task (ie cpu_capacity).
+ * task (ie cpu_capacity).
  *
- * cfs_rq.avg.util_avg is the sum of running time of runnable tasks plus the
+ * util_avg is the sum of running time of runnable tasks plus the
  * recent utilization of currently non-runnable tasks on a CPU. It represents
  * the amount of utilization of a CPU in the range [0..capacity_orig] where
  * capacity_orig is the cpu_capacity available at the highest frequency
@@ -1621,9 +1732,9 @@ extern unsigned int walt_disabled;
  * current capacity (capacity_curr <= capacity_orig) of the CPU because it is
  * the running time on this CPU scaled by capacity_curr.
  *
- * Nevertheless, cfs_rq.avg.util_avg can be higher than capacity_curr or even
+ * Nevertheless, util_avg can be higher than capacity_curr or even
  * higher than capacity_orig because of unfortunate rounding in
- * cfs.avg.util_avg or just after migrating tasks and new task wakeups until
+ * util_avg or just after migrating tasks and new task wakeups until
  * the average stabilizes with the new running time. We need to check that the
  * utilization stays within the range of [0..capacity_orig] and cap it if
  * necessary. Without utilization capping, a group could be seen as overloaded
@@ -1634,8 +1745,8 @@ extern unsigned int walt_disabled;
  */
 static inline unsigned long __cpu_util(int cpu, int delta)
 {
-	unsigned long util = cpu_rq(cpu)->cfs.avg.util_avg;
 	unsigned long capacity = capacity_orig_of(cpu);
+	unsigned long util;
 
 #ifdef CONFIG_SCHED_WALT
 	if (!walt_disabled && sysctl_sched_use_walt_cpu_util) {
@@ -1643,6 +1754,7 @@ static inline unsigned long __cpu_util(int cpu, int delta)
 		util = div_u64(util, walt_ravg_window);
 	}
 #endif
+	util = cpu_rq(cpu)->cfs.avg.util_avg + cpu_rq(cpu)->rt.avg.util_avg;
 	delta += util;
 	if (delta < 0)
 		return 0;
@@ -1654,7 +1766,6 @@ static inline unsigned long cpu_util(int cpu)
 {
 	return __cpu_util(cpu, 0);
 }
-
 #endif
 
 #ifdef CONFIG_CPU_FREQ_GOV_SCHED

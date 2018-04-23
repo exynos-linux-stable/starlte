@@ -401,13 +401,26 @@ config IRQ_TIME_ACCOUNTING
 	  If in doubt, say N here.
 
 config SCHED_WALT
-        bool "Support window based load tracking"
-        depends on SMP
-        help
-        This feature will allow the scheduler to maintain a tunable window
-	based set of metrics for tasks and runqueues. These metrics can be
-	used to guide task placement as well as task frequency requirements
-	for cpufreq governors.
+	bool "Support window based load tracking"
+	depends on SMP
+	depends on FAIR_GROUP_SCHED
+	help
+	  This feature will allow the scheduler to maintain a tunable window
+	  based set of metrics for tasks and runqueues. These metrics can be
+	  used to guide task placement as well as task frequency requirements
+	  for cpufreq governors.
+
+config SCHED_WALT_DEFAULT
+	bool "Use window based load tracking for cpu and task util"
+	depends on SCHED_WALT
+	default N
+	help
+	  If Y, use WALT signals for cpu and task utilization in the
+	  scheduler. This guides task placement and capacity selection for
+	  cpufreq governors.
+	  If N, use the PELT signals for cpu and task utilization.
+
+	  If in doubt, say N here.
 
 config BSD_PROCESS_ACCT
 	bool "BSD Process Accounting"
@@ -1377,6 +1390,18 @@ config SCHED_TUNE
 
 	  If unsure, say N.
 
+config SCHED_EHMP
+	bool "Exynos scheduler for Heterogeneous Multi-Processor"
+	depends on SMP
+	help
+	  This option supports Exynos scheduler for HMP architecture. It is
+	  designed to secure the limits of energy aware scheduler. This option
+	  provides features such as independent boosting functinos such as
+	  global boost and on-time migration, and prefer_perf and enhanced
+	  prefer_idle that work in conjunction with SCHEDTUNE.
+
+	  If unsure, say N.
+
 config DEFAULT_USE_ENERGY_AWARE
 	bool "Default to enabling the Energy Aware Scheduler feature"
 	default n
@@ -1384,6 +1409,19 @@ config DEFAULT_USE_ENERGY_AWARE
 	  This option defaults the ENERGY_AWARE scheduling feature to true,
 	  as without SCHED_DEBUG set this feature can't be enabled or disabled
 	  via sysctl.
+
+	  Say N if unsure.
+
+config SCHED_USE_FLUID_RT
+	bool "Enable Fluid RT scheduler feature"
+	depends on SMP
+	default n
+	help
+	  Basically, the Fluid RT selects the core by a task priority as usual.
+	  But beyond the basic behavior, FRT performs the load balancing of
+	  RT task by core selection with reference to utilization of rq.
+	  And in some circumstances, she allows the task with lower priority
+	  to preempt the higher one based on weighted load.
 
 	  Say N if unsure.
 
@@ -1891,6 +1929,15 @@ config SLUB_DEBUG
 	  SLUB sysfs support. /sys/slab will not exist and there will be
 	  no support for cache validation etc.
 
+config PTRACK_DEBUG
+	default n
+	bool "Enable PAGE debugging support"
+	help
+	  PTRACK support to track when the page is allocated and freed.
+	  The call trace is monitored and saved in the page structure i
+	  whenever the page allocation and free.
+	  This option affects on booting time & running time.
+
 config COMPAT_BRK
 	bool "Disable heap randomization"
 	default y
@@ -1997,6 +2044,14 @@ config SYSTEM_DATA_VERIFICATION
 	  trusted keyring to provide public keys.  This then can be used for
 	  module verification, kexec image verification and firmware blob
 	  verification.
+
+config DEFERRED_INITCALLS
+	bool "Deferred initcalls support"
+	default n
+	help
+	  Say 'y' here to include support for deferred initcalls.
+	  If some module init functions set as deferred initcall, they aren't
+	  called until /proc/deferred_initcalls is read.
 
 config PROFILING
 	bool "Profiling support"

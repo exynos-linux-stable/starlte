@@ -647,6 +647,7 @@ static int pstore_write_buf_user_compat(enum pstore_type_id type,
 			ret = -EFAULT;
 			break;
 		}
+		exynos_ss_hook_pmsg(psinfo->buf, c);
 		ret = psi->write_buf(type, reason, id, part, psinfo->buf,
 				     compressed, c, psi);
 		if (unlikely(ret < 0))

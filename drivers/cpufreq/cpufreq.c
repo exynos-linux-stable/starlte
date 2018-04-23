@@ -328,7 +328,7 @@ scale_freq_capacity(struct cpufreq_policy *policy, struct cpufreq_freqs *freqs)
 	pr_debug("cpus %*pbl cur/cur max freq %lu/%u kHz freq scale %lu\n",
 		 cpumask_pr_args(policy->cpus), cur, policy->max, scale);
 
-	for_each_cpu(cpu, policy->cpus)
+	for_each_cpu(cpu, policy->related_cpus)
 		per_cpu(freq_scale, cpu) = scale;
 
 	if (freqs)
@@ -340,7 +340,7 @@ scale_freq_capacity(struct cpufreq_policy *policy, struct cpufreq_freqs *freqs)
 		 cpumask_pr_args(policy->cpus), policy->max, cpuinfo->max_freq,
 		 scale);
 
-	for_each_cpu(cpu, policy->cpus)
+	for_each_cpu(cpu, policy->related_cpus)
 		per_cpu(max_freq_scale, cpu) = scale;
 }
 
@@ -1071,6 +1071,17 @@ static int cpufreq_add_policy_cpu(struct cpufreq_policy *policy, unsigned int cp
 	if (cpumask_test_cpu(cpu, policy->cpus))
 		return 0;
 
+#if defined (CONFIG_CPU_FREQ_GOV_SCHEDUTIL)
+	/*
+	 * If current governor is schedutil and hp governor is enabled,
+	 * using sugov_fast_start for reducing hp time
+	 */
+	if (((cpu != policy->cpu) && !cpufreq_suspended) &&
+		(policy->governor && !strncasecmp(policy->governor->name, "schedutil", CPUFREQ_NAME_LEN)))
+		if (sugov_fast_start(policy, cpu))
+				return 0;
+#endif
+
 	down_write(&policy->rwsem);
 	if (has_target())
 		cpufreq_stop_governor(policy);
@@ -1402,6 +1413,16 @@ static int cpufreq_offline(unsigned int cpu)
 	}
 
 	down_write(&policy->rwsem);
+
+#if defined(CONFIG_EXYNOS_HOTPLUG_GOVERNOR) && defined(CONFIG_CPU_FREQ_GOV_SCHEDUTIL)
+	if (cpu != policy->cpu) {
+		if (!cpufreq_suspended && policy->governor) {
+			cpufreq_remove_update_util_hook(cpu);
+			cpumask_clear_cpu(cpu, policy->cpus);
+		}
+		goto unlock;
+	}
+#endif
 	if (has_target())
 		cpufreq_stop_governor(policy);
 
@@ -2235,8 +2256,11 @@ static int cpufreq_set_policy(struct cpufreq_policy *policy,
 	* This check works well when we store new min/max freq attributes,
 	* because new_policy is a copy of policy with one field updated.
 	*/
-	if (new_policy->min > new_policy->max)
-		return -EINVAL;
+	if (new_policy->min > new_policy->max) {
+		pr_warn("%s: new_policy-min(%u) is higher than new_policy->max(%u)\n",
+					__func__, new_policy->min, new_policy->max);
+		new_policy->min = new_policy->max;
+	}
 
 	/* verify the cpu speed can be set within this limit */
 	ret = cpufreq_driver->verify(new_policy);
@@ -2259,6 +2283,7 @@ static int cpufreq_set_policy(struct cpufreq_policy *policy,
 	blocking_notifier_call_chain(&cpufreq_policy_notifier_list,
 			CPUFREQ_NOTIFY, new_policy);
 
+	new_policy->cur = policy->cur;
 	scale_freq_capacity(new_policy, NULL);
 
 	policy->min = new_policy->min;

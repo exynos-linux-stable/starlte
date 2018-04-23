@@ -138,6 +138,11 @@
 
 #include <trace/events/sock.h>
 
+#ifdef CONFIG_MPTCP
+#include <net/mptcp.h>
+#include <net/inet_common.h>
+#endif
+
 #include <net/tcp.h>
 #include <net/busy_poll.h>
 
@@ -238,7 +243,11 @@ static const char *const af_family_slock_key_strings[AF_MAX+1] = {
   "slock-AF_NFC"   , "slock-AF_VSOCK"    ,"slock-AF_KCM"       ,
   "slock-AF_QIPCRTR", "slock-AF_MAX"
 };
-static const char *const af_family_clock_key_strings[AF_MAX+1] = {
+
+#ifndef CONFIG_MPTCP
+static const
+#endif
+char *const af_family_clock_key_strings[AF_MAX + 1] = {
   "clock-AF_UNSPEC", "clock-AF_UNIX"     , "clock-AF_INET"     ,
   "clock-AF_AX25"  , "clock-AF_IPX"      , "clock-AF_APPLETALK",
   "clock-AF_NETROM", "clock-AF_BRIDGE"   , "clock-AF_ATMPVC"   ,
@@ -260,7 +269,10 @@ static const char *const af_family_clock_key_strings[AF_MAX+1] = {
  * sk_callback_lock locking rules are per-address-family,
  * so split the lock classes by using a per-AF key:
  */
-static struct lock_class_key af_callback_keys[AF_MAX];
+#ifndef CONFIG_MPTCP
+static
+#endif
+struct lock_class_key af_callback_keys[AF_MAX];
 
 /* Take into consideration the size of the struct sk_buff overhead in the
  * determination of these values, since that is non-constant across
@@ -620,6 +632,55 @@ out:
 	return ret;
 }
 
+/* START_OF_KNOX_NPA */
+/** The function sets the domain name associated with the socket. **/
+static int sock_set_domain_name(struct sock *sk, char __user *optval, int optlen)
+{
+	int ret = -EADDRNOTAVAIL;
+	char domain[255];
+
+	ret = -EINVAL;
+	if (optlen < 0)
+		goto out;
+
+	if (optlen > 255 - 1)
+		optlen = 255 - 1;
+
+	memset(domain, 0, sizeof(domain));
+
+	ret = -EFAULT;
+	if (copy_from_user(domain, optval, optlen))
+		goto out;
+	if (sk->domain_name[0] == '\0')
+		memcpy(sk->domain_name, domain, sizeof(sk->domain_name) - 1);
+	ret = 0;
+
+out:
+	return ret;
+}
+
+static int sock_set_dns_uid(struct sock *sk, char __user *optval, int optlen)
+{
+    int ret = -EADDRNOTAVAIL;
+
+    if (optlen < 0)
+		goto out;
+
+    if (optlen == sizeof(uid_t)) {
+		uid_t dns_uid;
+		ret = -EFAULT;
+		if (copy_from_user(&dns_uid, optval, sizeof(dns_uid)))
+			goto out;
+		memcpy(&sk->knox_dns_uid, &dns_uid, sizeof(sk->knox_dns_uid));
+		ret = 0;
+    }
+
+out:
+	return ret;
+}
+
+/* END_OF_KNOX_NPA */
+
 static inline void sock_valbool_flag(struct sock *sk, int bit, int valbool)
 {
 	if (valbool)
@@ -667,6 +728,13 @@ int sock_setsockopt(struct socket *sock, int level, int optname,
 
 	if (optname == SO_BINDTODEVICE)
 		return sock_setbindtodevice(sk, optval, optlen);
+
+	/* START_OF_KNOX_NPA */
+	if (optname == SO_SET_DOMAIN_NAME)
+		return sock_set_domain_name(sk, optval, optlen);
+	if (optname == SO_SET_DNS_UID)
+		return sock_set_dns_uid(sk, optval, optlen);
+	/* END_OF_KNOX_NPA */
 
 	if (optlen < sizeof(int))
 		return -EINVAL;
@@ -1291,8 +1359,28 @@ lenout:
  *
  * (We also register the sk_lock with the lock validator.)
  */
-static inline void sock_lock_init(struct sock *sk)
+#ifndef CONFIG_MPTCP
+static inline
+#endif
+void sock_lock_init(struct sock *sk)
 {
+#ifdef CONFIG_MPTCP
+	/* Reclassify the lock-class for subflows */
+	if (sk->sk_type == SOCK_STREAM && sk->sk_protocol == IPPROTO_TCP)
+		if (mptcp(tcp_sk(sk)) || tcp_sk(sk)->is_master_sk) {
+			sock_lock_init_class_and_name(sk, meta_slock_key_name,
+						      &meta_slock_key,
+						      meta_key_name,
+						      &meta_key);
+
+			/* We don't yet have the mptcp-point.
+			 * Thus we still need inet_sock_destruct
+			 */
+			sk->sk_destruct = inet_sock_destruct;
+			return;
+		}
+#endif
+
 	sock_lock_init_class_and_name(sk,
 			af_family_slock_key_strings[sk->sk_family],
 			af_family_slock_keys + sk->sk_family,
@@ -1321,8 +1409,11 @@ static void sock_copy(struct sock *nsk, const struct sock *osk)
 #endif
 }
 
-static struct sock *sk_prot_alloc(struct proto *prot, gfp_t priority,
-		int family)
+#ifndef CONFIG_MPTCP
+static
+#endif
+struct sock *sk_prot_alloc(struct proto *prot, gfp_t priority,
+			   int family)
 {
 	struct sock *sk;
 	struct kmem_cache *slab;
@@ -1333,7 +1424,16 @@ static struct sock *sk_prot_alloc(struct proto *prot, gfp_t priority,
 		if (!sk)
 			return sk;
 		if (priority & __GFP_ZERO)
+#ifdef CONFIG_MPTCP
+		{
+		if (prot->clear_sk)
+			prot->clear_sk(sk, prot->obj_size);
+		else
+#endif
 			sk_prot_clear_nulls(sk, prot->obj_size);
+#ifdef CONFIG_MPTCP
+	}
+#endif
 	} else
 		sk = kmalloc(prot->obj_size, priority);
 
@@ -1410,6 +1510,10 @@ struct sock *sk_alloc(struct net *net, int family, gfp_t priority,
 		cgroup_sk_alloc(&sk->sk_cgrp_data);
 		sock_update_classid(&sk->sk_cgrp_data);
 		sock_update_netprioidx(&sk->sk_cgrp_data);
+		/* START_OF_KNOX_NPA */
+		sk->knox_uid = current->cred->uid.val;
+		sk->knox_pid = current->tgid;
+		/* END_OF_KNOX_NPA */
 	}
 
 	return sk;
@@ -1501,7 +1605,9 @@ struct sock *sk_clone_lock(const struct sock *sk, const gfp_t priority)
 
 		sock_copy(newsk, sk);
 
+#ifdef CONFIG_MPTCP
 		newsk->sk_prot_creator = sk->sk_prot;
+#endif
 
 		/* SANITY */
 		if (likely(newsk->sk_net_refcnt))
@@ -1534,6 +1640,9 @@ struct sock *sk_clone_lock(const struct sock *sk, const gfp_t priority)
 		newsk->sk_userlocks	= sk->sk_userlocks & ~SOCK_BINDPORT_LOCK;
 
 		sock_reset_flag(newsk, SOCK_DONE);
+#ifdef CONFIG_MPTCP
+		sock_reset_flag(newsk, SOCK_MPTCP);
+#endif
 		skb_queue_head_init(&newsk->sk_error_queue);
 
 		filter = rcu_dereference_protected(newsk->sk_filter, 1);

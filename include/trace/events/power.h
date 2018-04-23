@@ -38,6 +38,50 @@ DEFINE_EVENT(cpu, cpu_idle,
 	TP_ARGS(state, cpu_id)
 );
 
+TRACE_EVENT(sugov_slack_func,
+
+	TP_PROTO(int cpu),
+
+	TP_ARGS(cpu),
+
+	TP_STRUCT__entry(
+		__field(int, cpu)
+	),
+
+	TP_fast_assign(
+		__entry->cpu = cpu;
+	),
+
+	TP_printk("cpu=%d SLACK EXPIRED", __entry->cpu)
+);
+
+TRACE_EVENT(sugov_slack,
+
+	TP_PROTO(int cpu, unsigned long util,
+		unsigned long min, unsigned long action, int ret),
+
+	TP_ARGS(cpu, util, min, action, ret),
+
+	TP_STRUCT__entry(
+		__field(int, cpu)
+		__field(unsigned long, util)
+		__field(unsigned long, min)
+		__field(unsigned long, action)
+		__field(int, ret)
+	),
+
+	TP_fast_assign(
+		__entry->cpu = cpu;
+		__entry->util = util;
+		__entry->min = min;
+		__entry->action = action;
+		__entry->ret = ret;
+	),
+
+	TP_printk("cpu=%d util=%ld min=%ld action=%ld ret=%d", __entry->cpu,
+			__entry->util, __entry->min, __entry->action, __entry->ret)
+);
+
 TRACE_EVENT(powernv_throttle,
 
 	TP_PROTO(int chip_id, const char *reason, int pmax),
@@ -404,9 +448,22 @@ DECLARE_EVENT_CLASS(pm_qos_request,
 
 	TP_printk("pm_qos_class=%s value=%d",
 		  __print_symbolic(__entry->pm_qos_class,
-			{ PM_QOS_CPU_DMA_LATENCY,	"CPU_DMA_LATENCY" },
-			{ PM_QOS_NETWORK_LATENCY,	"NETWORK_LATENCY" },
-			{ PM_QOS_NETWORK_THROUGHPUT,	"NETWORK_THROUGHPUT" }),
+			{ PM_QOS_CPU_DMA_LATENCY,	"CPU_DMA_LATENCY"	},
+			{ PM_QOS_NETWORK_LATENCY,	"NETWORK_LATENCY"	},
+			{ PM_QOS_CLUSTER0_FREQ_MIN,	"CLUSTER0_MIN"		},
+			{ PM_QOS_CLUSTER0_FREQ_MAX,	"CLUSTER0_MAX"		},
+			{ PM_QOS_CLUSTER1_FREQ_MIN,	"CLUSTER1_MIN"		},
+			{ PM_QOS_CLUSTER1_FREQ_MAX,	"CLUSTER1_MAX"		},
+			{ PM_QOS_DEVICE_THROUGHPUT,	"DEVICE_THROUGHPUT"	},
+			{ PM_QOS_INTCAM_THROUGHPUT,	"INTCAM_THROUGHPUT"	},
+			{ PM_QOS_BUS_THROUGHPUT,	"BUS_THROUGHPUT"	},
+			{ PM_QOS_BUS_THROUGHPUT_MAX,	"BUS_THROUGHPUT_MAX"	},
+			{ PM_QOS_NETWORK_THROUGHPUT,	"NETWORK_THROUGHPUT"	},
+			{ PM_QOS_MEMORY_BANDWIDTH,	"MEMORY_BANDWIDTH"	},
+			{ PM_QOS_CPU_ONLINE_MIN,	"CPU_ONLINE_MIN"	},
+			{ PM_QOS_CPU_ONLINE_MAX,	"CPU_ONLINE_MAX"	},
+			{ PM_QOS_DISPLAY_THROUGHPUT,	"DISPLAY_THROUGHPUT"	},
+			{ PM_QOS_CAM_THROUGHPUT,	"CAM_THROUGHPUT"	}),
 		  __entry->value)
 );
 
@@ -451,9 +508,22 @@ TRACE_EVENT(pm_qos_update_request_timeout,
 
 	TP_printk("pm_qos_class=%s value=%d, timeout_us=%ld",
 		  __print_symbolic(__entry->pm_qos_class,
-			{ PM_QOS_CPU_DMA_LATENCY,	"CPU_DMA_LATENCY" },
-			{ PM_QOS_NETWORK_LATENCY,	"NETWORK_LATENCY" },
-			{ PM_QOS_NETWORK_THROUGHPUT,	"NETWORK_THROUGHPUT" }),
+			{ PM_QOS_CPU_DMA_LATENCY,	"CPU_DMA_LATENCY"	},
+			{ PM_QOS_NETWORK_LATENCY,	"NETWORK_LATENCY"	},
+			{ PM_QOS_CLUSTER0_FREQ_MIN,	"CLUSTER0_MIN"		},
+			{ PM_QOS_CLUSTER0_FREQ_MAX,	"CLUSTER0_MAX"		},
+			{ PM_QOS_CLUSTER1_FREQ_MIN,	"CLUSTER1_MIN"		},
+			{ PM_QOS_CLUSTER1_FREQ_MAX,	"CLUSTER1_MAX"		},
+			{ PM_QOS_DEVICE_THROUGHPUT,	"DEVICE_THROUGHPUT"	},
+			{ PM_QOS_INTCAM_THROUGHPUT,	"INTCAM_THROUGHPUT"	},
+			{ PM_QOS_BUS_THROUGHPUT,	"BUS_THROUGHPUT"	},
+			{ PM_QOS_BUS_THROUGHPUT_MAX,	"BUS_THROUGHPUT_MAX"	},
+			{ PM_QOS_NETWORK_THROUGHPUT,	"NETWORK_THROUGHPUT"	},
+			{ PM_QOS_MEMORY_BANDWIDTH,	"MEMORY_BANDWIDTH"	},
+			{ PM_QOS_CPU_ONLINE_MIN,	"CPU_ONLINE_MIN"	},
+			{ PM_QOS_CPU_ONLINE_MAX,	"CPU_ONLINE_MAX"	},
+			{ PM_QOS_DISPLAY_THROUGHPUT,	"DISPLAY_THROUGHPUT"	},
+			{ PM_QOS_CAM_THROUGHPUT,	"CAM_THROUGHPUT"	}),
 		  __entry->value, __entry->timeout_us)
 );
 
@@ -554,6 +624,168 @@ DEFINE_EVENT(dev_pm_qos_request, dev_pm_qos_remove_request,
 
 	TP_ARGS(name, type, new_value)
 );
+
+TRACE_EVENT(ocp_max_limit,
+
+	TP_PROTO(unsigned int clipped_freq, bool start),
+
+	TP_ARGS(clipped_freq, start),
+
+	TP_STRUCT__entry(
+		__field(	u32,		clipped_freq	)
+		__field(	bool,		start	)
+	),
+
+	TP_fast_assign(
+		__entry->clipped_freq = clipped_freq;
+		__entry->start = start;
+	),
+
+	TP_printk("clipped_freq=%lu %s",
+		  (unsigned long)__entry->clipped_freq,
+		  (__entry->start)?"begin":"end")
+);
+
+TRACE_EVENT(hpgov_req_hotplug,
+
+	TP_PROTO(int fast_hp, int min),
+
+	TP_ARGS(fast_hp, min),
+
+	TP_STRUCT__entry(
+		__field(int, fast_hp)
+		__field(int, min)
+	),
+
+	TP_fast_assign(
+		__entry->fast_hp = fast_hp;
+		__entry->min = min;
+	),
+
+	TP_printk("fast_hp=%d min=%d",
+		__entry->fast_hp, __entry->min)
+);
+
+TRACE_EVENT(hpgov_cpu_load,
+
+	TP_PROTO(int cpu, int load, int max_load),
+
+	TP_ARGS(cpu, load, max_load),
+
+	TP_STRUCT__entry(
+		__field(int, cpu)
+		__field(int, load)
+		__field(int, max_load)
+	),
+
+	TP_fast_assign(
+		__entry->cpu = cpu;
+		__entry->load = load;
+		__entry->max_load = max_load;
+	),
+
+	TP_printk("cpu=%d load=%d, max_load=%d",
+		__entry->cpu, __entry->load, __entry->max_load)
+);
+
+TRACE_EVENT(hpgov_cluster_load,
+
+	TP_PROTO(int load, int max_load),
+
+	TP_ARGS(load, max_load),
+
+	TP_STRUCT__entry(
+		__field(int, load)
+		__field(int, max_load)
+	),
+
+	TP_fast_assign(
+		__entry->load = load;
+		__entry->max_load = max_load;
+	),
+
+	TP_printk("load_sum=%d, max_load_sum=%d",
+		__entry->load, __entry->max_load)
+);
+
+TRACE_EVENT(hpgov_cluster_busy,
+
+	TP_PROTO(int cluster, int thr, int load_sum, int max_load_sum, int busy),
+
+	TP_ARGS(cluster, thr, load_sum, max_load_sum, busy),
+
+	TP_STRUCT__entry(
+		__field(int, cluster)
+		__field(int, thr)
+		__field(int, load_sum)
+		__field(int, max_load_sum)
+		__field(int, busy)
+	),
+
+	TP_fast_assign(
+		__entry->cluster = cluster;
+		__entry->thr = thr;
+		__entry->load_sum = load_sum;
+		__entry->max_load_sum = max_load_sum;
+		__entry->busy = busy;
+	),
+
+	TP_printk("cluster=%d, thr=%d, load_sum=%d, max_load_sum=%d busy=%d",
+			__entry->cluster, __entry->thr,
+			__entry->load_sum, __entry->max_load_sum,
+			__entry->busy)
+);
+
+TRACE_EVENT(hpgov_load_imbalance,
+
+	TP_PROTO(int cluster, unsigned long idle_thr, int heavy_thr,
+			int idle_cnt, int active_cnt, int heavy_cnt),
+
+	TP_ARGS(cluster, idle_thr, heavy_thr, idle_cnt, active_cnt, heavy_cnt),
+
+	TP_STRUCT__entry(
+		__field(int, cluster)
+		__field(unsigned long, idle_thr)
+		__field(int, heavy_thr)
+		__field(int, idle_cnt)
+		__field(int, active_cnt)
+		__field(int, heavy_cnt)
+	),
+
+	TP_fast_assign(
+		__entry->cluster = cluster;
+		__entry->idle_thr = idle_thr;
+		__entry->heavy_thr = heavy_thr;
+		__entry->idle_cnt = idle_cnt;
+		__entry->active_cnt = active_cnt;
+		__entry->heavy_cnt = heavy_cnt;
+	),
+
+	TP_printk("cl=%d, idle_thr=%ld, heavy_thr=%d, idle_cnt=%d, active_cnt= %d, heavy_cnt=%d",
+		__entry->cluster, __entry->idle_thr, __entry->heavy_thr,
+			__entry->idle_cnt, __entry->active_cnt, __entry->heavy_cnt)
+);
+
+TRACE_EVENT(hpgov_update_mode,
+
+	TP_PROTO(int cur_mode, int target_mode),
+
+	TP_ARGS(cur_mode, target_mode),
+
+	TP_STRUCT__entry(
+		__field(int, cur_mode)
+		__field(int, target_mode)
+	),
+
+	TP_fast_assign(
+		__entry->cur_mode = cur_mode;
+		__entry->target_mode = target_mode;
+	),
+
+	TP_printk("update_mode %d -> %d",
+		__entry->cur_mode, __entry->target_mode)
+);
+
 #endif /* _TRACE_POWER_H */
 
 /* This part must be outside protection */

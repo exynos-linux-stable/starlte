@@ -131,4 +131,5 @@ void __hyp_text __kvm_flush_vm_context(void)
 	asm volatile("tlbi alle1is	\n"
 		     "ic ialluis	  ": : );
 	dsb(ish);
+	isb();
 }

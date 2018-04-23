@@ -38,6 +38,7 @@
 #include <asm/irq.h>
 #include <asm/uaccess.h>
 
+#define BT43XX_LINE 1
 /*
  * This is used to lock changes in serial line configuration.
  */
@@ -505,8 +506,13 @@ static void uart_change_speed(struct tty_struct *tty, struct uart_state *state,
 
 	/* reset sw-assisted CTS flow control based on (possibly) new mode */
 	hw_stopped = uport->hw_stopped;
-	uport->hw_stopped = uart_softcts_mode(uport) &&
-				!(uport->ops->get_mctrl(uport) & TIOCM_CTS);
+	if (uart_softcts_mode(uport) && !(uport->ops->get_mctrl(uport) & TIOCM_CTS)) {
+		if (uport->line != BT43XX_LINE)
+			uport->hw_stopped = 1;
+	} else {
+		uport->hw_stopped = 0;
+	}
+
 	if (uport->hw_stopped) {
 		if (!hw_stopped)
 			uport->ops->stop_tx(uport);

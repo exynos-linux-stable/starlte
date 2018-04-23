@@ -52,3 +52,21 @@ config ION_OF
 	  extensions
 
 	  If using Ion and devicetree, you should say Y here
+
+config ION_EXYNOS
+	tristate "Ion for Exynos"
+	depends on ARCH_EXYNOS && ION
+	select CMA
+	select HPA
+	help
+	  Choose this option if you wish to use ion on a Samsung Exynos.
+
+config ION_EXYNOS_STAT_LOG
+	bool "Gathering stats for Exynos ION"
+	default y
+	select TRACING
+	depends on ION_EXYNOS
+	help
+	  Say Y if you need to see some stats info via debugfs
+
+source drivers/staging/android/ion/exynos/Kconfig

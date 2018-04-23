@@ -1032,6 +1032,11 @@ int xhci_hub_control(struct usb_hcd *hcd, u16 typeReq, u16 wValue,
 
 			temp = readl(port_array[wIndex]);
 			bus_state->suspended_ports |= 1 << wIndex;
+
+			/* WA for Lhotse U3 Suspend */
+			if (xhci_hub_check_speed(hcd))
+				phy_ilbk(xhci->main_hcd->phy);
+
 			break;
 		case USB_PORT_FEAT_LINK_STATE:
 			temp = readl(port_array[wIndex]);
@@ -1301,6 +1306,40 @@ int xhci_hub_status_data(struct usb_hcd *hcd, char *buf)
 	return status ? retval : 0;
 }
 
+int xhci_hub_check_speed(struct usb_hcd *hcd)
+{
+	struct xhci_hcd	*xhci = hcd_to_xhci(hcd);
+	int slot_id;
+	int i;
+	enum usb_device_speed speed;
+
+	if (hcd->speed < HCD_USB3)
+		return 0;
+
+	slot_id = 0;
+	for (i = 0; i < MAX_HC_SLOTS; i++) {
+		if (!xhci->devs[i])
+			continue;
+		speed = xhci->devs[i]->udev->speed;
+		if (speed >= USB_SPEED_SUPER) {
+			return 1;
+			break;
+		}
+	}
+
+	return 0;
+}
+
+int xhci_check_usbl2_support(struct usb_hcd *hcd)
+{
+	struct xhci_hcd	*xhci = hcd_to_xhci(hcd);
+
+	if (xhci->quirks & XHCI_L2_SUPPORT)
+		return true;
+	else
+		return false;
+}
+
 #ifdef CONFIG_PM
 
 int xhci_bus_suspend(struct usb_hcd *hcd)
@@ -1310,6 +1349,8 @@ int xhci_bus_suspend(struct usb_hcd *hcd)
 	__le32 __iomem **port_array;
 	struct xhci_bus_state *bus_state;
 	unsigned long flags;
+	int is_port_connect = 0;
+	int ret;
 
 	max_ports = xhci_get_ports(hcd, &port_array);
 	bus_state = &xhci->bus_state[hcd_index(hcd)];
@@ -1336,7 +1377,6 @@ int xhci_bus_suspend(struct usb_hcd *hcd)
 		t2 = xhci_port_state_to_neutral(t1);
 
 		if ((t1 & PORT_PE) && !(t1 & PORT_PLS_MASK)) {
-			xhci_dbg(xhci, "port %d not suspended\n", port_index);
 			slot_id = xhci_find_slot_id_by_port(hcd, xhci,
 					port_index + 1);
 			if (slot_id) {
@@ -1356,6 +1396,7 @@ int xhci_bus_suspend(struct usb_hcd *hcd)
 			if (t1 & PORT_CONNECT) {
 				t2 |= PORT_WKOC_E | PORT_WKDISC_E;
 				t2 &= ~PORT_WKCONN_E;
+				is_port_connect = 1;
 			} else {
 				t2 |= PORT_WKOC_E | PORT_WKCONN_E;
 				t2 &= ~PORT_WKDISC_E;
@@ -1364,12 +1405,28 @@ int xhci_bus_suspend(struct usb_hcd *hcd)
 			t2 &= ~PORT_WAKE_BITS;
 
 		t1 = xhci_port_state_to_neutral(t1);
-		if (t1 != t2)
+		if (t1 != t2) {
 			writel(t2, port_array[port_index]);
+		}
 	}
+
+	if (is_port_connect && usb_hcd_is_primary_hcd(hcd)) {
+		xhci_info(xhci, "port is connected, phy vendor set\n");
+		ret = phy_vendor_set(xhci->main_hcd->phy, 1, 0);
+		if (ret) {
+			xhci_info(xhci, "phy vendor set fail\n");
+			spin_unlock_irqrestore(&xhci->lock, flags);
+			return ret;
+		}
+	}
+
+	xhci_info(xhci, "%s 'HC_STATE_SUSPENDED' portcon: %d primary_hcd: %d\n",
+		__func__, is_port_connect, usb_hcd_is_primary_hcd(hcd));
 	hcd->state = HC_STATE_SUSPENDED;
 	bus_state->next_statechange = jiffies + msecs_to_jiffies(10);
+
 	spin_unlock_irqrestore(&xhci->lock, flags);
+
 	return 0;
 }
 
@@ -1415,6 +1472,10 @@ int xhci_bus_resume(struct usb_hcd *hcd)
 	int slot_id;
 	int sret;
 
+	if (usb_hcd_is_primary_hcd(hcd)) {
+		xhci_info(xhci, "[%s] phy vendor set \n",__func__);
+		phy_vendor_set(xhci->main_hcd->phy, 1, 1);
+	}
 	max_ports = xhci_get_ports(hcd, &port_array);
 	bus_state = &xhci->bus_state[hcd_index(hcd)];
 
@@ -1455,6 +1516,7 @@ int xhci_bus_resume(struct usb_hcd *hcd)
 		    (temp & PORT_PLS_MASK)) {
 			set_bit(port_index, &port_was_suspended);
 			if (!DEV_SUPERSPEED_ANY(temp)) {
+				xhci_info(xhci, "%s: need REWA CANCEL\n", __func__);
 				xhci_set_link_state(xhci, port_array,
 						port_index, XDEV_RESUME);
 				need_usb2_u3_exit = true;
@@ -1504,6 +1566,10 @@ int xhci_bus_resume(struct usb_hcd *hcd)
 	temp = readl(&xhci->op_regs->command);
 
 	spin_unlock_irqrestore(&xhci->lock, flags);
+
+	hcd->state = HC_STATE_RESUMING;
+	xhci_info(xhci, "%s is done, hcd state is 'HC_STATE_RESUMING'\n",__func__);
+
 	return 0;
 }
 

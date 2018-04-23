@@ -44,6 +44,7 @@
 #include <linux/hw_breakpoint.h>
 #include <linux/personality.h>
 #include <linux/notifier.h>
+#include <linux/exynos-ss.h>
 #include <trace/events/power.h>
 
 #include <asm/alternative.h>
@@ -54,6 +55,8 @@
 #include <asm/mmu_context.h>
 #include <asm/processor.h>
 #include <asm/stacktrace.h>
+
+#include <soc/samsung/exynos-condbg.h>
 
 #ifdef CONFIG_CC_STACKPROTECTOR
 #include <linux/stackprotector.h>
@@ -133,7 +136,9 @@ void machine_power_off(void)
 
 /*
  * Restart requires that the secondary CPUs stop performing any activity
- * while the primary CPU resets the system. Systems with multiple CPUs must
+ * while the primary CPU resets the system. Systems with a single CPU can
+ * use soft_restart() as their machine descriptor's .restart hook, since that
+ * will cause the only available CPU to reset. Systems with multiple CPUs must
  * provide a HW restart implementation, to ensure that all CPUs reset at once.
  * This is required so that any code running after reset on the primary CPU
  * doesn't have to co-ordinate with other CPUs to ensure they aren't still
@@ -144,7 +149,9 @@ void machine_restart(char *cmd)
 {
 	/* Disable interrupts first */
 	local_irq_disable();
-	smp_send_stop();
+
+	if (!ecd_get_enable() || ecd_get_debug_mode() != MODE_DEBUG)
+		smp_send_stop();
 
 	/*
 	 * UpdateCapsule() depends on the system being reset via
@@ -152,6 +159,8 @@ void machine_restart(char *cmd)
 	 */
 	if (efi_enabled(EFI_RUNTIME_SERVICES))
 		efi_reboot(reboot_mode, NULL);
+
+	exynos_ss_post_reboot(cmd);
 
 	/* Now call the architecture specific reboot code. */
 	if (arm_pm_restart)
@@ -179,8 +188,15 @@ static void show_data(unsigned long addr, int nbytes, const char *name)
 	 * don't attempt to dump non-kernel addresses or
 	 * values that are probably just small negative numbers
 	 */
-	if (addr < PAGE_OFFSET || addr > -256UL)
-		return;
+	if (addr < PAGE_OFFSET || addr >= -256UL) {
+		/*
+		 * If kaslr is enabled, Kernel code is able to
+		 * locate in VMALLOC address.
+		 */
+		if (addr < (unsigned long)KERNEL_START ||
+		    addr > (unsigned long)KERNEL_END)
+			return;
+	}
 
 	printk("\n%s: %#lx:\n", name, addr);
 
@@ -198,17 +214,22 @@ static void show_data(unsigned long addr, int nbytes, const char *name)
 		 * just display low 16 bits of address to keep
 		 * each line of the dump < 80 characters
 		 */
-		printk("%04lx ", (unsigned long)p & 0xffff);
+		printk("%04lx :", (unsigned long)p & 0xffff);
 		for (j = 0; j < 8; j++) {
 			u32	data;
 			if (probe_kernel_address(p, data)) {
-				printk(" ********");
+				if (j == 7)
+					pr_cont(" ********\n");
+				else
+					pr_cont(" ********");
 			} else {
-				printk(" %08x", data);
+				if (j == 7)
+					pr_cont(" %08X\n", data);
+				else
+					pr_cont(" %08X", data);
 			}
 			++p;
 		}
-		printk("\n");
 	}
 }
 
@@ -245,6 +266,21 @@ void __show_regs(struct pt_regs *regs)
 		top_reg = 29;
 	}
 
+	if (!user_mode(regs)) {
+		exynos_ss_save_context(regs);
+		/*
+		 *  If you want to see more kernel events after panic,
+		 *  you should modify exynos_ss_set_enable's function 2nd parameter
+		 *  to true.
+		 */
+		exynos_ss_set_enable("log_kevents", false);
+	}
+
+	pr_info("TIF_FOREIGN_FPSTATE: %d, FP/SIMD depth %d, cpu: %d\n",
+			test_thread_flag(TIF_FOREIGN_FPSTATE),
+			atomic_read(&current->thread.fpsimd_kernel_state.depth),
+			current->thread.fpsimd_kernel_state.cpu);
+
 	show_regs_print_info(KERN_DEFAULT);
 	print_symbol("PC is at %s\n", instruction_pointer(regs));
 	print_symbol("LR is at %s\n", lr);
@@ -266,7 +302,7 @@ void __show_regs(struct pt_regs *regs)
 		pr_cont("\n");
 	}
 	if (!user_mode(regs))
-		show_extra_register_data(regs, 128);
+		show_extra_register_data(regs, 256);
 	printk("\n");
 }
 

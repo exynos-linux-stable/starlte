@@ -43,7 +43,7 @@ static pgprot_t __get_dma_pgprot(unsigned long attrs, pgprot_t prot,
 
 static struct gen_pool *atomic_pool;
 
-#define DEFAULT_DMA_COHERENT_POOL_SIZE  SZ_256K
+#define DEFAULT_DMA_COHERENT_POOL_SIZE  SZ_2M
 static size_t atomic_pool_size __initdata = DEFAULT_DMA_COHERENT_POOL_SIZE;
 
 static int __init early_coherent_pool(char *p)
@@ -376,6 +376,128 @@ static struct dma_map_ops swiotlb_dma_ops = {
 	.mapping_error = __swiotlb_dma_mapping_error,
 };
 
+static void *arm_exynos_dma_mcode_alloc(struct device *dev, size_t size,
+	dma_addr_t *handle, gfp_t gfp, unsigned long attrs);
+static void arm_exynos_dma_mcode_free(struct device *dev, size_t size, void *cpu_addr,
+				  dma_addr_t handle, unsigned long attrs);
+
+struct dma_map_ops arm_exynos_dma_mcode_ops = {
+	.alloc			= arm_exynos_dma_mcode_alloc,
+	.free			= arm_exynos_dma_mcode_free,
+};
+EXPORT_SYMBOL(arm_exynos_dma_mcode_ops);
+
+static void *arm_exynos_dma_mcode_alloc(struct device *dev, size_t size,
+	dma_addr_t *handle, gfp_t gfp, unsigned long attrs)
+{
+	void *addr;
+
+	if (!*handle)
+		return NULL;
+
+	addr = ioremap(*handle, size);
+
+	return addr;
+}
+
+static void arm_exynos_dma_mcode_free(struct device *dev, size_t size, void *cpu_addr,
+				  dma_addr_t handle, unsigned long attrs)
+{
+	iounmap(cpu_addr);
+}
+
+#ifdef CONFIG_EXYNOS_PCIE_IOMMU
+extern int pcie_iommu_map(unsigned long iova, phys_addr_t paddr,
+		size_t size, int prot);
+extern size_t pcie_iommu_unmap(unsigned long iova, size_t size);
+dma_addr_t dma_pool_start;
+
+static void *__exynos_pcie_dma_alloc(struct device *dev, size_t size,
+			 dma_addr_t *dma_handle, gfp_t flags,
+			 unsigned long attrs)
+{
+	void *coherent_ptr;
+	int ret;
+
+	coherent_ptr = __dma_alloc(dev, size, dma_handle, flags, attrs);
+	if (coherent_ptr != NULL) {
+		ret = pcie_iommu_map(*dma_handle, *dma_handle, size,
+				DMA_BIDIRECTIONAL);
+		if (ret != 0) {
+			pr_err("DMA alloc - Can't map PCIe SysMMU table!!!\n");
+			__dma_free(dev, size, coherent_ptr, *dma_handle, attrs);
+
+			return NULL;
+		}
+	}
+
+	return coherent_ptr;
+
+}
+
+static void __exynos_pcie_dma_free(struct device *dev, size_t size,
+		       void *vaddr, dma_addr_t dma_handle,
+		       unsigned long attrs)
+{
+	__dma_free(dev, size, vaddr, dma_handle, attrs);
+	pcie_iommu_unmap(dma_handle, size);
+}
+
+static dma_addr_t __exynos_pcie_swiotlb_map_page(struct device *dev,
+				struct page *page, unsigned long offset,
+				size_t size, enum dma_data_direction dir,
+				unsigned long attrs)
+{
+	dma_addr_t dev_addr;
+	int ret;
+
+	dev_addr = __swiotlb_map_page(dev, page, offset, size, dir, attrs);
+	ret = pcie_iommu_map(dev_addr, dev_addr, size, dir);
+	if (ret != 0) {
+		pr_err("DMA map - Can't map PCIe SysMMU table!!!\n");
+
+		return 0;
+	}
+
+	return dev_addr;
+}
+
+static void __exynos_pcie_swiotlb_unmap_page(struct device *dev,
+				dma_addr_t dev_addr,
+				size_t size, enum dma_data_direction dir,
+				unsigned long attrs)
+{
+	__swiotlb_unmap_page(dev, dev_addr, size, dir, attrs);
+	pcie_iommu_unmap(dev_addr, size);
+}
+
+void get_atomic_pool_info(dma_addr_t *paddr, size_t *size)
+{
+	*paddr = dma_pool_start;
+	*size = gen_pool_size(atomic_pool);
+}
+EXPORT_SYMBOL(get_atomic_pool_info);
+
+struct dma_map_ops exynos_pcie_dma_ops = {
+	.alloc = __exynos_pcie_dma_alloc,
+	.free = __exynos_pcie_dma_free,
+	.mmap = __swiotlb_mmap,
+	.get_sgtable = __swiotlb_get_sgtable,
+	.map_page = __exynos_pcie_swiotlb_map_page,
+	.unmap_page = __exynos_pcie_swiotlb_unmap_page,
+	.map_sg = __swiotlb_map_sg_attrs,
+	.unmap_sg = __swiotlb_unmap_sg_attrs,
+	.sync_single_for_cpu = __swiotlb_sync_single_for_cpu,
+	.sync_single_for_device = __swiotlb_sync_single_for_device,
+	.sync_sg_for_cpu = __swiotlb_sync_sg_for_cpu,
+	.sync_sg_for_device = __swiotlb_sync_sg_for_device,
+	.dma_supported = __swiotlb_dma_supported,
+	.mapping_error = __swiotlb_dma_mapping_error,
+};
+EXPORT_SYMBOL(exynos_pcie_dma_ops);
+
+#endif
+
 static int __init atomic_pool_init(void)
 {
 	pgprot_t prot = __pgprot(PROT_NORMAL_NC);
@@ -416,6 +538,10 @@ static int __init atomic_pool_init(void)
 		gen_pool_set_algo(atomic_pool,
 				  gen_pool_first_fit_order_align,
 				  (void *)PAGE_SHIFT);
+
+#ifdef CONFIG_EXYNOS_PCIE_IOMMU
+		dma_pool_start = page_to_phys(page);
+#endif
 
 		pr_info("DMA: preallocated %zu KiB pool for atomic allocations\n",
 			atomic_pool_size / 1024);
@@ -842,7 +968,11 @@ static bool do_iommu_attach(struct device *dev, const struct iommu_ops *ops,
 		return false;
 	}
 
-	dev->archdata.dma_ops = &iommu_dma_ops;
+	if (!domain->iova_cookie)
+		dev->archdata.dma_ops = &swiotlb_dma_ops;
+	else
+		dev->archdata.dma_ops = &iommu_dma_ops;
+
 	return true;
 }
 

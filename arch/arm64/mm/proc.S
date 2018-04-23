@@ -198,12 +198,31 @@ ENTRY(__cpu_setup)
 	 *   NORMAL		100	11111111
 	 *   NORMAL_WT		101	10111011
 	 */
+#ifdef CONFIG_ARM64_ERRATUM_814818
+	mrs	x0, midr_el1
+	ldr	x1, =0x410fd050
+	cmp	x0, x1
+	b.eq	1f
+#endif
 	ldr	x5, =MAIR(0x00, MT_DEVICE_nGnRnE) | \
 		     MAIR(0x04, MT_DEVICE_nGnRE) | \
 		     MAIR(0x0c, MT_DEVICE_GRE) | \
 		     MAIR(0x44, MT_NORMAL_NC) | \
 		     MAIR(0xff, MT_NORMAL) | \
 		     MAIR(0xbb, MT_NORMAL_WT)
+#ifdef CONFIG_ARM64_ERRATUM_814818
+	b	2f
+1:
+#endif
+	ldr	x5, =MAIR(0x00, MT_DEVICE_nGnRnE) | \
+		     MAIR(0x04, MT_DEVICE_nGnRE) | \
+		     MAIR(0x0c, MT_DEVICE_GRE) | \
+		     MAIR(0x44, MT_NORMAL_NC) | \
+		     MAIR(0xef, MT_NORMAL) | \
+		     MAIR(0xab, MT_NORMAL_WT)
+#ifdef CONFIG_ARM64_ERRATUM_814818
+2:
+#endif
 	msr	mair_el1, x5
 	/*
 	 * Prepare SCTLR
