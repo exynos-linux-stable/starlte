@@ -88,7 +88,6 @@ alternative_if ARM64_UNMAP_KERNEL_AT_EL0
 alternative_else_nop_endif
 #endif
 
-   /* ATTENTION-ELS */
 	.if	\el == 0
 	sub	sp, sp, #S_FRAME_SIZE
 	.else
@@ -96,7 +95,6 @@ alternative_else_nop_endif
 	.endif /* \el == 0 */
 	b	el\()\el\()_\label
 	.endm
-   /* ATTENTION-ELS */
 
 	.macro tramp_alias, dst, sym
 	mov_q	\dst, TRAMP_VALIAS
@@ -278,13 +276,11 @@ alternative_else_nop_endif
 	ldp	x26, x27, [sp, #16 * 13]
 	ldp	x28, x29, [sp, #16 * 14]
 	ldr	lr, [sp, #S_LR]
-   /* ATTENTION-ELS */
 	.if	\el == 0
 	add	sp, sp, #S_FRAME_SIZE		// restore sp
 	.else
 	add	sp, sp, #(S_FRAME_SIZE+PRESERVE_STACK_SIZE)
 	.endif /* \el == 0 */
-   /* ATTENTION-ELS */
 
 	.if	\el == 0
 alternative_insn eret, nop, ARM64_UNMAP_KERNEL_AT_EL0
