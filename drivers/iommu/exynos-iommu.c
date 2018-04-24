@@ -452,7 +452,6 @@ static int __init sysmmu_parse_dt(struct device *sysmmu,
 	unsigned int qos = DEFAULT_QOS_VALUE;
 	int ret;
 
-
 	/* Parsing QoS */
 	ret = of_property_read_u32_index(sysmmu->of_node, "qos", 0, &qos);
 	if (!ret && (qos > 15)) {
