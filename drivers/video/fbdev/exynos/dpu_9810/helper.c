@@ -507,7 +507,7 @@ int decon_create_fence(struct decon_device *decon, struct sync_file **sync_file)
 	int fd = -EMFILE;
 
 	decon->timeline_max++;
-	pt = sync_pt_create(decon->timeline, sizeof(*pt), decon->timeline_max);
+	pt = sync_pt_create(decon->timeline, decon->timeline_max);
 	if (!pt) {
 		decon_err("%s: failed to create sync pt\n", __func__);
 		goto err;
