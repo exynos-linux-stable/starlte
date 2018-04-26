@@ -96,7 +96,6 @@ struct sync_timeline *sync_timeline_create(const char *name)
 	obj->context = fence_context_alloc(1);
 	strlcpy(obj->name, name, sizeof(obj->name));
 
-	obj->pt_tree = RB_ROOT;
 	INIT_LIST_HEAD(&obj->pt_list);
 	spin_lock_init(&obj->lock);
 
@@ -151,7 +150,6 @@ static void timeline_fence_defer_release(struct work_struct *wq)
 		spin_lock_irqsave(fence->lock, flags);
 		if (!list_empty(&pt->link)) {
 			list_del(&pt->link);
-			rb_erase(&pt->node, &parent->pt_tree);
 		}
 		spin_unlock_irqrestore(fence->lock, flags);
 	}
@@ -237,7 +235,6 @@ void sync_timeline_signal(struct sync_timeline *obj, unsigned int inc)
 			break;
 
 		list_del_init(&pt->link);
-		rb_erase(&pt->node, &obj->pt_tree);
 
 		/*
 		 * A signal callback may release the last reference to this
@@ -279,38 +276,8 @@ struct sync_pt *sync_pt_create(struct sync_timeline *obj,
 	INIT_LIST_HEAD(&pt->link);
 
 	spin_lock_irq(&obj->lock);
-	if (!fence_is_signaled_locked(&pt->base)) {
-		struct rb_node **p = &obj->pt_tree.rb_node;
-		struct rb_node *parent = NULL;
-
-		while (*p) {
-			struct sync_pt *other;
-			int cmp;
-
-			parent = *p;
-			other = rb_entry(parent, typeof(*pt), node);
-			cmp = value - other->base.seqno;
-			if (cmp > 0) {
-				p = &parent->rb_right;
-			} else if (cmp < 0) {
-				p = &parent->rb_left;
-			} else {
-				if (fence_get_rcu(&other->base)) {
-					fence_put(&pt->base);
-					pt = other;
-					goto unlock;
-				}
-				p = &parent->rb_left;
-			}
-		}
-		rb_link_node(&pt->node, parent, p);
-		rb_insert_color(&pt->node, &obj->pt_tree);
-
-		parent = rb_next(&pt->node);
-		list_add_tail(&pt->link,
-			      parent ? &rb_entry(parent, typeof(*pt), node)->link : &obj->pt_list);
-	}
-unlock:
+	if (!fence_is_signaled_locked(&pt->base))
+		list_add_tail(&pt->link, &obj->pt_list);
 	spin_unlock_irq(&obj->lock);
 
 	return pt;
