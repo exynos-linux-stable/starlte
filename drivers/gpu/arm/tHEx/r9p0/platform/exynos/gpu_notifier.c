@@ -324,42 +324,6 @@ static struct notifier_block gpu_noc_nb = {
 };
 #endif
 
-static int gpu_oomdebug_notifier(struct notifier_block *self,
-						       unsigned long dummy, void *parm)
-{
-	struct list_head *entry;
-	const struct list_head *kbdev_list;
-
-	kbdev_list = kbase_dev_list_get();
-	list_for_each(entry, kbdev_list) {
-		struct kbase_device *kbdev = NULL;
-		struct kbasep_kctx_list_element *element;
-
-		kbdev = list_entry(entry, struct kbase_device, entry);
-		/* output the total memory usage and cap for this device */
-		pr_info("%-16s  %10u\n",
-				kbdev->devname,
-				atomic_read(&(kbdev->memdev.used_pages)));
-		mutex_lock(&kbdev->kctx_list_lock);
-		list_for_each_entry(element, &kbdev->kctx_list, link) {
-			/* output the memory usage and cap for each kctx
-			   54             * opened on this device */
-			pr_info("  %s-0x%p %10u\n",
-					"kctx",
-					element->kctx,
-					atomic_read(&(element->kctx->used_pages)));
-		}
-		mutex_unlock(&kbdev->kctx_list_lock);
-	}
-	kbase_dev_list_put(kbdev_list);
-	return NOTIFY_OK;
-}
-
-
-static struct notifier_block gpu_oomdebug_nb = {
-	.notifier_call = gpu_oomdebug_notifier,
-};
-
 int gpu_notifier_init(struct kbase_device *kbdev)
 {
 	struct exynos_context *platform = (struct exynos_context *)kbdev->platform_context;
@@ -381,9 +345,6 @@ int gpu_notifier_init(struct kbase_device *kbdev)
 #endif
 
 	platform->power_status = true;
-
-	if (register_oomdebug_notifier(&gpu_oomdebug_nb) < 0)
-		pr_err("%s: failed to register oom debug notifier\n", __func__);
 
 	return 0;
 }

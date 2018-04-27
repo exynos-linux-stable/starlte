@@ -537,33 +537,6 @@ err:
 	return ret;
 }
 
-static int ion_oomdebug_notify(struct notifier_block *self,
-			       unsigned long dummy, void *parm)
-{
-	struct rb_node *n;
-
-	pr_info("-------------------- ion buffers -------------------------\n");
-	pr_info("%10.s %2.s %4.s %6.s %16.s %10.s %8.s\n",
-		"heap", "id", "type", "pid", "task", "size", "flag");
-	pr_info("----------------------------------------------------------\n");
-
-	mutex_lock(&ion_exynos->buffer_lock);
-	for (n = rb_first(&ion_exynos->buffers); n; n = rb_next(n)) {
-		struct ion_buffer *buf = rb_entry(n, struct ion_buffer, node);
-
-		pr_info("%10.s %2u %4u %6u %16.s %10zu %#8lx\n",
-			buf->heap->name, buf->heap->id, buf->heap->type,
-			buf->pid, buf->task_comm, buf->size, buf->flags);
-	}
-	mutex_unlock(&ion_exynos->buffer_lock);
-
-	return NOTIFY_OK;
-}
-
-static struct notifier_block ion_oomdebug_nb = {
-	.notifier_call = ion_oomdebug_notify,
-};
-
 static long exynos_custom_ioctl(struct ion_client *client, unsigned int cmd,
 				unsigned long arg)
 {
@@ -606,9 +579,6 @@ static int __init exynos_ion_init(void)
 		pr_err("%s: failed to create ion device\n", __func__);
 		return PTR_ERR(ion_exynos);
 	}
-
-	if (register_oomdebug_notifier(&ion_oomdebug_nb) < 0)
-		pr_err("%s: failed to register oom debug notifier\n", __func__);
 
 	show_mem_extra_notifier_register(&ion_system_heap_nb);
 	show_mem_extra_notifier_register(&ion_system_heap_pool_nb);
