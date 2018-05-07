@@ -204,7 +204,7 @@ static int binder_update_page_range(struct binder_alloc *alloc, int allocate,
 		mm = get_task_mm(alloc->tsk);
 
 	if (mm) {
-		down_write(&mm->mmap_sem);
+		down_read(&mm->mmap_sem);
 		vma = alloc->vma;
 		if (vma && mm != alloc->vma_vm_mm) {
 			pr_err("%d: vma mm and task mm mismatch\n",
@@ -254,7 +254,7 @@ static int binder_update_page_range(struct binder_alloc *alloc, int allocate,
 		/* vm_insert_page does not seem to increment the refcount */
 	}
 	if (mm) {
-		up_write(&mm->mmap_sem);
+		up_read(&mm->mmap_sem);
 		mmput(mm);
 	}
 	return 0;
@@ -276,7 +276,7 @@ err_alloc_page_failed:
 	}
 err_no_vma:
 	if (mm) {
-		up_write(&mm->mmap_sem);
+		up_read(&mm->mmap_sem);
 		mmput(mm);
 	}
 	return vma ? -ENOMEM : -ESRCH;
