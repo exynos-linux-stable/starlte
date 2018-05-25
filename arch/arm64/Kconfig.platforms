@@ -285,10 +285,6 @@ config ARCH_EXYNOS9
 	help
 	  Samsung EXYNOS9 (Meercat/Ananke) SoC based systems
 
-config ARCH_EXYNOS_DTS_NAME
-	string "Name of device tree source"
-	default "exynos"
-
 config ZONE_MOVABLE
 	bool "Enable Zone Movable"
 	default n
