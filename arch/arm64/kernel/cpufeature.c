@@ -785,7 +785,7 @@ static bool unmap_kernel_at_el0(const struct arm64_cpu_capabilities *entry,
 	}
 
 	/* Useful for KASLR robustness */
-	if (IS_ENABLED(CONFIG_RANDOMIZE_BASE))
+	if (IS_ENABLED(CONFIG_RANDOMIZE_BASE) || IS_ENABLED(CONFIG_RELOCATABLE_KERNEL))
 		return true;
 
 	/* Don't force KPTI for CPUs that are not vulnerable */
