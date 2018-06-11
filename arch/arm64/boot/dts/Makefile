@@ -1,6 +1,23 @@
-dtb-$(CONFIG_CAMERA_STAR2) += exynos9810-star2lte_eur_open_26.dtb
-dtb-$(CONFIG_CAMERA_STAR) += exynos9810-starlte_eur_open_26.dtb
+dts-dirs += exynos
 
-always		:= $(dtb-y)
 subdir-y	:= $(dts-dirs)
-clean-files	:= *.dtb
+
+dtstree		:= $(srctree)/$(src)
+
+dtb-$(CONFIG_OF_ALL_DTBS) := $(patsubst $(dtstree)/%.dts,%.dtb, $(foreach d,$(dts-dirs), $(wildcard $(dtstree)/$(d)/*.dts)))
+
+always		:= $(dtb-y) $(dtbo-y)
+
+targets += dtbs
+
+DTB_NAMES := $(subst $\",,$(CONFIG_BUILD_ARM64_APPENDED_DTB_IMAGE_NAMES))
+ifneq ($(DTB_NAMES),)
+DTB_LIST := $(addsuffix .dtb,$(DTB_NAMES))
+else
+DTB_LIST := $(dtb-y) $(dtbo-y)
+endif
+targets += $(DTB_LIST)
+
+dtbs: $(addprefix $(obj)/, $(DTB_LIST))
+
+clean-files := dts/*.dtb *.dtb*
