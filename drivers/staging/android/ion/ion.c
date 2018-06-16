@@ -419,8 +419,11 @@ void ion_buffer_destroy(struct ion_buffer *buffer)
 	trace_ion_free_start((unsigned long) buffer, buffer->size,
 				buffer->private_flags & ION_PRIV_FLAG_SHRINKER_FREE);
 
-	if (WARN_ON(buffer->kmap_cnt > 0))
+	if (buffer->kmap_cnt > 0) {
+		pr_warn_once("%s: buffer still mapped in the kernel\n",
+			     __func__);
 		buffer->heap->ops->unmap_kernel(buffer->heap, buffer);
+	}
 
 	list_for_each_entry_safe(iovm_map, tmp, &buffer->iovas, list) {
 		iovmm_unmap(iovm_map->dev, iovm_map->iova);
