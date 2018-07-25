@@ -37,7 +37,8 @@
 
 #define ARM64_UNMAP_KERNEL_AT_EL0		23
 #define ARM64_HARDEN_BRANCH_PREDICTOR		24
+#define ARM64_SSBD				25
 
-#define ARM64_NCAPS				25
+#define ARM64_NCAPS				26
 
 #endif /* __ASM_CPUCAPS_H */
