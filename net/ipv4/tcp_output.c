@@ -1179,7 +1179,10 @@ int __tcp_transmit_skb(struct sock *sk, struct sk_buff *skb,
 	return err;
 }
 
-static int tcp_transmit_skb(struct sock *sk, struct sk_buff *skb, int clone_it,
+#ifndef CONFIG_MPTCP
+static
+#endif
+int tcp_transmit_skb(struct sock *sk, struct sk_buff *skb, int clone_it,
 			    gfp_t gfp_mask)
 {
 	return __tcp_transmit_skb(sk, skb, clone_it, gfp_mask,
