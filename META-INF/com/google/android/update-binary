@@ -1,0 +1,133 @@
+#!/sbin/sh
+#
+
+ZIPFILE=$3
+OUTFD=$2
+
+kernel=4.9.122
+apgk=0.99.13
+build=1
+
+# Detect real $OUTFD
+readlink /proc/$$/fd/$OUTFD 2>/dev/null | grep /tmp >/dev/null
+if [ $? -eq 0 ] ; then
+  OUTFD=0
+  for FD in `ls /proc/$$/fd` ; do
+    readlink /proc/$$/fd/$FD 2>/dev/null | grep pipe >/dev/null
+    if [ $? -eq 0 ] ; then
+      ps | grep " 3 $FD " | grep -v grep >/dev/null
+      if [ $? -eq 0 ] ; then
+	OUTFD=$FD
+	break
+      fi
+    fi
+  done
+fi
+
+ui_print() {
+  echo -n -e "ui_print $1\n" >> /proc/self/fd/$OUTFD
+  echo -n -e "ui_print\n" >> /proc/self/fd/$OUTFD
+}
+
+resolve_link() {
+  if [ -z "$1" ] || [ ! -e $1 ] ; then return 1 ; fi
+  local VAR=$1
+  while [ -L $VAR ]; do
+    VAR=$(readlink $VAR)
+  done
+  echo $VAR
+}
+
+unzip_file() {
+  unzip -l "$ZIPFILE" | grep "$1" >/dev/null || return 1
+  unzip -p "$ZIPFILE" $1 > $2
+  return $?
+}
+
+
+ui_print " "
+ui_print "======================================="
+ui_print "         APGK $kernel-$apgk-$build"
+ui_print "         a pretty good kernel"
+ui_print "=======================================" 
+ui_print " "
+
+BOOT=$(resolve_link $(find /dev/block/platform -type l -iname boot)) ||
+  BOOT=$(resolve_link $(find /dev/block/platform -type l -iname kernel))
+
+if [ -z "$BOOT" ]; then
+  ui_print " - No boot partition found. Installation aborted."
+  ui_print " "
+  exit 1
+fi
+
+getprop ro.boot.bootloader | grep '^G965F' >/dev/null && device=G965F
+getprop ro.boot.bootloader | grep '^G960F' >/dev/null && device=G960F
+
+# Read kernel choice from archive name, if applicable.
+#
+#ZIPDIR=${ZIPFILE%/*}
+ZIPNAME=${ZIPFILE##*/}
+[ $ZIPNAME != ${ZIPNAME/_underclock//} ] && UNDERCLOCK=true
+[ $ZIPNAME != ${ZIPNAME/_overclock//} ] && OVERCLOCK=true
+
+# Otherwise, check for dotfiles to determine kernel choice.
+#
+[ -f /external_sd/.underclock ] && UNDERCLOCK=true
+[ -f /external_sd/.overclock ] && OVERCLOCK=true
+
+# Now get to work.
+#
+for i in boot-G965F.img boot-G965F-oc.img.bsdiff boot-G965F-uc.img.bsdiff \
+boot-G960F.img.bsdiff boot-G960F-oc.img.bsdiff boot-G960F-uc.img.bsdiff \
+bspatch; do
+  unzip_file $i /tmp/$i
+done
+
+bspatch=/tmp/bspatch
+chmod 755 $bspatch
+
+image=standard
+variant=""
+src_img=/tmp/boot-G965F.img
+img_960=/tmp/boot-G960F.img
+
+if [ "$OVERCLOCK" = true ]; then
+  image=overclock
+  variant=-oc
+elif [ "$UNDERCLOCK" = true ]; then
+  image=underclock
+  variant=-uc
+fi
+
+if [ "$device" = G965F ] || [ "$device" = G960F ]; then
+  dst_img=/tmp/boot-$device$variant.img
+  if [ -f $dst_img.bsdiff ]; then
+    ui_print " - Constructing $image kernel for $device..."
+
+    if [ "$device" = G960F ] && [ -n "$variant" ]; then
+      # First produce the standard G960F image, because the oc and uc deltas
+      # are based on that.
+      #
+      $bspatch $src_img $img_960 $img_960.bsdiff
+      src_img=$img_960
+    fi
+
+    [ -f $dst_img ] || $bspatch $src_img $dst_img $dst_img.bsdiff
+  fi
+else
+  ui_print " - Unsupported device detected. Installation aborted."
+  ui_print " "
+  exit 1
+fi
+
+ui_print " - Flashing $image boot image onto $device..."
+[ -n "$debug" ] && ui_print " - dd if=$dst_img of=$BOOT"
+
+/sbin/dd if=$dst_img of=$BOOT 
+
+ui_print " - Installation completed."
+ui_print " - You may now root the boot image at your discretion."
+ui_print " "
+
+exit 0
