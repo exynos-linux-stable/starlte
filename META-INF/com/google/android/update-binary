@@ -4,8 +4,8 @@
 ZIPFILE=$3
 OUTFD=$2
 
-kernel=4.9.122
-apgk=0.99.13
+kernel=4.9.125
+apgk=0.99.17
 build=1
 
 # Detect real $OUTFD
@@ -52,6 +52,27 @@ ui_print "         a pretty good kernel"
 ui_print "=======================================" 
 ui_print " "
 
+bl=$( getprop ro.boot.bootloader )
+fw=${bl:9:4}
+device=${bl:0:5}
+model=${device:0:4}
+suffix=${device:4}
+
+# BusyBox shell sucks.
+#
+#if [[ $device != G96[05][FN] ]]; then
+if ! ( [ $model = G960 ] || [ $model = G965 ] &&
+       [ $suffix = F ]   || [ $suffix = N ] ); then
+  ui_print " - Unsupported device detected. Installation aborted."
+  ui_print " "
+  exit 1
+fi
+
+ui_print " - Detected a $device device on $fw firmware."
+
+[ $suffix = N ] &&
+  ui_print " - NOTE: '$suffix' device support is experimental."
+
 BOOT=$(resolve_link $(find /dev/block/platform -type l -iname boot)) ||
   BOOT=$(resolve_link $(find /dev/block/platform -type l -iname kernel))
 
@@ -61,12 +82,8 @@ if [ -z "$BOOT" ]; then
   exit 1
 fi
 
-getprop ro.boot.bootloader | grep '^G965F' >/dev/null && device=G965F
-getprop ro.boot.bootloader | grep '^G960F' >/dev/null && device=G960F
-
 # Read kernel choice from archive name, if applicable.
 #
-#ZIPDIR=${ZIPFILE%/*}
 ZIPNAME=${ZIPFILE##*/}
 [ $ZIPNAME != ${ZIPNAME/_underclock//} ] && UNDERCLOCK=true
 [ $ZIPNAME != ${ZIPNAME/_overclock//} ] && OVERCLOCK=true
@@ -100,25 +117,20 @@ elif [ "$UNDERCLOCK" = true ]; then
   variant=-uc
 fi
 
-if [ "$device" = G965F ] || [ "$device" = G960F ]; then
-  dst_img=/tmp/boot-$device$variant.img
-  if [ -f $dst_img.bsdiff ]; then
-    ui_print " - Constructing $image kernel for $device..."
+dst_img=/tmp/boot-${model}F$variant.img
 
-    if [ "$device" = G960F ] && [ -n "$variant" ]; then
-      # First produce the standard G960F image, because the oc and uc deltas
-      # are based on that.
-      #
-      $bspatch $src_img $img_960 $img_960.bsdiff
-      src_img=$img_960
-    fi
+if [ -f $dst_img.bsdiff ]; then
+  ui_print " - Constructing $image kernel for $device..."
 
-    [ -f $dst_img ] || $bspatch $src_img $dst_img $dst_img.bsdiff
+  if [ $model = G960 ] && [ -n "$variant" ]; then
+    # First produce the standard G960F image, because the oc and uc deltas
+    # are based on that.
+    #
+    $bspatch $src_img $img_960 $img_960.bsdiff
+    src_img=$img_960
   fi
-else
-  ui_print " - Unsupported device detected. Installation aborted."
-  ui_print " "
-  exit 1
+
+  [ -f $dst_img ] || $bspatch $src_img $dst_img $dst_img.bsdiff
 fi
 
 ui_print " - Flashing $image boot image onto $device..."
@@ -127,7 +139,7 @@ ui_print " - Flashing $image boot image onto $device..."
 /sbin/dd if=$dst_img of=$BOOT 
 
 ui_print " - Installation completed."
-ui_print " - You may now root the boot image at your discretion."
+ui_print " - You may now root the device at your discretion."
 ui_print " "
 
 exit 0
