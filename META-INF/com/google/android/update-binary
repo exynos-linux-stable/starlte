@@ -4,8 +4,8 @@
 ZIPFILE=$3
 OUTFD=$2
 
-kernel=4.9.125
-apgk=0.99.17
+kernel=4.9.127
+apgk=0.99.19
 build=1
 
 # Detect real $OUTFD
@@ -139,7 +139,32 @@ ui_print " - Flashing $image boot image onto $device..."
 /sbin/dd if=$dst_img of=$BOOT 
 
 ui_print " - Installation completed."
-ui_print " - You may now root the device at your discretion."
+
+# Read desire to install Magisk from archive name, if applicable.
+#
+[ $ZIPNAME != ${ZIPNAME/_magisk//} ] && MAGISK=true
+
+# Check for dotfile existence and install Magisk if present.
+#
+if [ ! -f /external_sd/.magisk ] && [ -n "$MAGISK" ]; then
+  ui_print " - You may now root the device at your discretion."
+  ui_print " "
+
+  exit 0
+fi
+
+magisk=$( ls -r /external_sd/Magisk/Magisk-v* | head -n 1 )
+if [ $? -ne 0 ] ; then
+  ui_print " - No Magisk zip file found."
+  ui_print " "
+
+  exit 1
+fi
+
+ui_print " - Installing ${magisk##*/}..."
 ui_print " "
 
-exit 0
+tmp=/tmp/magisk
+mkdir $tmp
+unzip -d $tmp $magisk META-INF/com/google/android/\* 
+exec /sbin/sh $tmp/META-INF/com/google/android/update-binary dummy $OUTFD $magisk
