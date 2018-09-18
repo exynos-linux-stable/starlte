@@ -146,14 +146,29 @@ ui_print " - Installation completed."
 
 # Check for dotfile existence and install Magisk if present.
 #
-if [ ! -f /external_sd/.magisk ] && [ -z "$MAGISK" ]; then
+int=/sdcard/Download	# The standard download location on internal SD card.
+ext=/external_sd	# The external SD card, if present.
+
+# If .magisk exists at none of these locations and the APGK zip file doesn't
+# contain _magisk in the name, we are finished.
+#
+if [ ! -f $int/.magisk ] && [ ! -f $ext/.magisk ] && [ -z "$MAGISK" ]; then
   ui_print " - You may now root the device at your discretion."
   ui_print " "
 
   exit 0
 fi
 
-magisk=$( ls -r /external_sd/Magisk/Magisk-v* | head -n 1 )
+# Find the most recent build of Magisk from the various locations.
+#
+# We sort all of the files with a version in the name and take the most
+# recent according to lexical sort order. If there are no versioned files, we
+# fall back to looking for magisk.zip and Magisk.zip in the various locations,
+# and take the one with the most recent timestamp. If that still doesn't find
+# a file, we cannot proceed.
+#
+magisk=$( { ls -r $int/Magisk-v* $ext/Magisk/Magisk-v* 2>/dev/null;
+	    ls -rt $int/[Mm]agisk.zip $ext/Magisk/[Mm]agisk.zip 2>/dev/null; } | head -n 1 )
 if [ ! -f "$magisk" ]; then
   ui_print " - No Magisk zip file found."
   ui_print " "
