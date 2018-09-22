@@ -4,8 +4,8 @@
 ZIPFILE=$3
 OUTFD=$2
 
-kernel=4.9.127
-apgk=0.99.19
+kernel=4.9.128
+apgk=0.99.20
 build=1
 
 # Detect real $OUTFD
@@ -163,12 +163,14 @@ fi
 #
 # We sort all of the files with a version in the name and take the most
 # recent according to lexical sort order. If there are no versioned files, we
-# fall back to looking for magisk.zip and Magisk.zip in the various locations,
-# and take the one with the most recent timestamp. If that still doesn't find
-# a file, we cannot proceed.
+# fall back to looking for magisk-debug.zip in the various locations, and take
+# the one with the most recent timestamp. Otherwise, we look for magisk.zip
+# and Magisk.zip in the various locations, taking the one with the most recent
+# timestamp. If that still doesn't find a file, we cannot proceed.
 #
 magisk=$( { ls -r $int/Magisk-v* $ext/Magisk/Magisk-v* 2>/dev/null;
-	    ls -rt $int/[Mm]agisk.zip $ext/Magisk/[Mm]agisk.zip 2>/dev/null; } | head -n 1 )
+	    ls -t $int/magisk-debug.zip $ext/Magisk/magisk-debug.zip 2>/dev/null;
+	    ls -t $int/[Mm]agisk.zip $ext/Magisk/[Mm]agisk.zip 2>/dev/null; } | head -n 1 )
 if [ ! -f "$magisk" ]; then
   ui_print " - No Magisk zip file found."
   ui_print " "
