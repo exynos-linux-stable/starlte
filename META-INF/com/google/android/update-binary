@@ -4,8 +4,8 @@
 ZIPFILE=$3
 OUTFD=$2
 
-kernel=4.9.128
-apgk=0.99.20
+kernel=4.9.129
+apgk=0.99.21
 build=1
 
 # Detect real $OUTFD
