@@ -4,8 +4,8 @@
 ZIPFILE=$3
 OUTFD=$2
 
-kernel=4.9.129
-apgk=0.99.21
+kernel=4.9.130
+apgk=0.99.22
 build=1
 
 # Detect real $OUTFD
@@ -161,16 +161,27 @@ fi
 
 # Find the most recent build of Magisk from the various locations.
 #
-# We sort all of the files with a version in the name and take the most
-# recent according to lexical sort order. If there are no versioned files, we
-# fall back to looking for magisk-debug.zip in the various locations, and take
-# the one with the most recent timestamp. Otherwise, we look for magisk.zip
-# and Magisk.zip in the various locations, taking the one with the most recent
-# timestamp. If that still doesn't find a file, we cannot proceed.
+# The order of precedence is:
+#
+# 1. Files with an explicit version in their name, e.g kantjer and ianmacd
+#    builds.
+# 2. Unversioned files that indicate a release build with their name, e.g.
+#    official Canary channel release builds.
+# 3. Unversioned files that indicate a debug build with their name, e.g.
+#    official Canary channel debug builds.
+# 4. Unversioned files matching the pattern [Mm]agisk.zip, e.g. files
+#    extracted from ROMs, etc.
+#
+# Lexical sort order is used for category 1. The timestamp of the file is used
+# for all others. If no files are found, we cannot proceed.
 #
 magisk=$( { ls -r $int/Magisk-v* $ext/Magisk/Magisk-v* 2>/dev/null;
-	    ls -t $int/magisk-debug.zip $ext/Magisk/magisk-debug.zip 2>/dev/null;
-	    ls -t $int/[Mm]agisk.zip $ext/Magisk/[Mm]agisk.zip 2>/dev/null; } | head -n 1 )
+	    ls -t $int/magisk-release.zip
+		  $ext/Magisk/magisk-release.zip 2>/dev/null;
+	    ls -t $int/magisk-debug.zip
+		  $ext/Magisk/magisk-debug.zip 2>/dev/null;
+	    ls -t $int/[Mm]agisk.zip
+	    $ext/Magisk/[Mm]agisk.zip 2>/dev/null; } | head -n 1 )
 if [ ! -f "$magisk" ]; then
   ui_print " - No Magisk zip file found."
   ui_print " "
