@@ -19,6 +19,13 @@
 
 unsigned long task_util(struct task_struct *p)
 {
+#ifdef CONFIG_SCHED_WALT
+	if (!walt_disabled && sysctl_sched_use_walt_task_util) {
+		unsigned long demand = p->ravg.demand;
+		return (demand << SCHED_CAPACITY_SHIFT) / walt_ravg_window;
+	}
+#endif
+
 	if (rt_task(p))
 		return p->rt.avg.util_avg;
 	else
@@ -37,7 +44,15 @@ static inline struct sched_entity *se_of(struct sched_avg *sa)
 
 #define entity_is_cfs_rq(se)	(se->my_q)
 #define entity_is_task(se)	(!se->my_q)
-#define LOAD_AVG_MAX		47742
+#ifdef CONFIG_PELT_HALFLIFE_32
+#define LOAD_AVG_MAX 47742 /* maximum possible load avg */
+#endif
+#ifdef CONFIG_PELT_HALFLIFE_16
+#define LOAD_AVG_MAX 24152
+#endif
+#ifdef CONFIG_PELT_HALFLIFE_8
+#define LOAD_AVG_MAX 12337
+#endif
 
 static unsigned long maxcap_val = 1024;
 static int maxcap_cpu = 0;
@@ -600,26 +615,69 @@ static void mark_shallowest_cpu(int cpu, unsigned int *min_exit_latency,
 
 	cpumask_set_cpu(cpu, shallowest_cpus);
 }
-static int check_migration_task(struct task_struct *p)
-{
-	if (rt_task(p))
-		return !p->rt.avg.last_update_time;
-	else
-		return !p->se.avg.last_update_time;
-}
 
-unsigned long cpu_util_wake(int cpu, struct task_struct *p)
+static int cpu_util_wake(int cpu, struct task_struct *p)
 {
-	unsigned long util, capacity;
+	struct cfs_rq *cfs_rq;
+	unsigned long util;
+
+#ifdef CONFIG_SCHED_WALT
+	/*
+	 * WALT does not decay idle tasks in the same manner
+	 * as PELT, so it makes little sense to subtract task
+	 * utilization from cpu utilization. Instead just use
+	 * cpu_util for this case.
+	 */
+	if (!walt_disabled && sysctl_sched_use_walt_cpu_util &&
+	    p->state == TASK_WAKING)
+		return cpu_util(cpu);
+#endif
 
 	/* Task has no contribution or is new */
-	if (cpu != task_cpu(p) || check_migration_task(p))
+	if (cpu != task_cpu(p) || !READ_ONCE(p->se.avg.last_update_time))
 		return cpu_util(cpu);
 
-	capacity = capacity_orig_of(cpu);
-	util = max_t(long, cpu_util(cpu) - task_util(p), 0);
+	cfs_rq = &cpu_rq(cpu)->cfs;
+	util = READ_ONCE(cfs_rq->avg.util_avg);
 
-	return (util >= capacity) ? capacity : util;
+	/* Discount task's blocked util from CPU's util */
+	util -= min_t(unsigned int, util, task_util(p));
+
+	/*
+	 * Covered cases:
+	 *
+	 * a) if *p is the only task sleeping on this CPU, then:
+	 *      cpu_util (== task_util) > util_est (== 0)
+	 *    and thus we return:
+	 *      cpu_util_wake = (cpu_util - task_util) = 0
+	 *
+	 * b) if other tasks are SLEEPING on this CPU, which is now exiting
+	 *    IDLE, then:
+	 *      cpu_util >= task_util
+	 *      cpu_util > util_est (== 0)
+	 *    and thus we discount *p's blocked utilization to return:
+	 *      cpu_util_wake = (cpu_util - task_util) >= 0
+	 *
+	 * c) if other tasks are RUNNABLE on that CPU and
+	 *      util_est > cpu_util
+	 *    then we use util_est since it returns a more restrictive
+	 *    estimation of the spare capacity on that CPU, by just
+	 *    considering the expected utilization of tasks already
+	 *    runnable on that CPU.
+	 *
+	 * Cases a) and b) are covered by the above code, while case c) is
+	 * covered by the following code when estimated utilization is
+	 * enabled.
+	 */
+	if (sched_feat(UTIL_EST))
+		util = max_t(unsigned long, util, READ_ONCE(cfs_rq->avg.util_est.enqueued));
+
+	/*
+	 * Utilization (estimated) can exceed the CPU capacity, thus let's
+	 * clamp to the maximum CPU capacity to ensure consistency with
+	 * the cpu_util call.
+	 */
+	return min(util, capacity_orig_of(cpu));
 }
 
 static int find_group_boost_target(struct task_struct *p)
@@ -1443,7 +1501,7 @@ static void ontime_update_next_balance(int cpu, struct ontime_avg *oa)
 #define cap_scale(v, s) ((v)*(s) >> SCHED_CAPACITY_SHIFT)
 
 u64 decay_load(u64 val, u64 n);
-u32 __compute_runnable_contrib(u64 n);
+u32 __accumulate_pelt_segments(u64 periods, u32 d1, u32 d3);
 
 /*
  * ontime_update_load_avg : load tracking for ontime-migration
@@ -1487,7 +1545,7 @@ void ontime_update_load_avg(int cpu, struct sched_avg *sa,
 
 		/* New load is decayed by the elapsed period and accumulated */
 		if (weight) {
-			contrib = __compute_runnable_contrib(periods);
+			contrib = __accumulate_pelt_segments(periods, period_contrib, delta);
 			contrib = cap_scale(contrib, scale_freq);
 			oa->load_sum += contrib * scale_cpu;
 		}
@@ -1550,7 +1608,7 @@ pure_initcall(init_ontime);
 /**********************************************************************
  * cpu selection                                                      *
  **********************************************************************/
-unsigned long boosted_task_util(struct task_struct *task);
+unsigned long boosted_task_util(struct task_struct *p);
 int energy_diff(struct energy_env *eenv);
 
 static inline int find_best_target(struct sched_domain *sd, struct task_struct *p)
@@ -1652,7 +1710,7 @@ static inline int find_best_target(struct sched_domain *sd, struct task_struct *
 				.util_delta     = task_util(p),
 				.src_cpu        = task_cpu(p),
 				.dst_cpu        = i,
-				.task           = p,
+				.p              = p,
 			};
 
 			if (eenv.src_cpu == eenv.dst_cpu)
@@ -1703,7 +1761,7 @@ static int select_energy_cpu(struct sched_domain *sd, struct task_struct *p,
 			.util_delta     = task_util(p),
 			.src_cpu        = prev_cpu,
 			.dst_cpu        = target_cpu,
-			.task           = p,
+			.p              = p,
 		};
 
 		/* Not enough spare capacity on previous cpu */

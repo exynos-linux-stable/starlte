@@ -75,6 +75,11 @@ SCHED_FEAT(LB_MIN, false)
 SCHED_FEAT(ATTACH_AGE_LOAD, true)
 
 /*
+ * UtilEstimation. Use estimated CPU utilization.
+ */
+SCHED_FEAT(UTIL_EST, true)
+
+/*
  * Energy aware scheduling. Use platform energy model to guide scheduling
  * decisions optimizing for energy efficiency.
  */
@@ -93,6 +98,8 @@ SCHED_FEAT(ENERGY_FILTER, false)
 
 #ifdef CONFIG_SCHED_EHMP
 SCHED_FEAT(EXYNOS_HMP, true)
+SCHED_FEAT(EXYNOS_HMP_OM, true)
 #else
 SCHED_FEAT(EXYNOS_HMP, false)
+SCHED_FEAT(EXYNOS_HMP_OM, false)
 #endif

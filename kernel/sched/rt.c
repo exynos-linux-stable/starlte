@@ -259,11 +259,20 @@ int alloc_rt_sched_group(struct task_group *tg, struct task_group *parent)
 #ifdef CONFIG_SMP
 
 #define entity_is_task(se)	(!se->my_q)
+#ifdef CONFIG_PELT_HALFLIFE_32
 #define LOAD_AVG_MAX		47742
+#endif
+#ifdef CONFIG_PELT_HALFLIFE_16
+#define LOAD_AVG_MAX		24152
+#endif
+#ifdef CONFIG_PELT_HALFLIFE_8
+#define LOAD_AVG_MAX		12337
+#endif
 #define cap_scale(v, s) ((v)*(s) >> SCHED_CAPACITY_SHIFT)
 
 u64 decay_load(u64 val, u64 n);
-u32 __compute_runnable_contrib(u64 n);
+u32 accumulate_sum(u64 delta, int cpu, struct sched_avg *sa,
+	       unsigned long weight, int running, struct cfs_rq *cfs_rq);
 
 /*
  * We can represent the historical contribution to runnable average as the
@@ -295,12 +304,9 @@ u32 __compute_runnable_contrib(u64 n);
  */
 static __always_inline int
 __update_load_avg(u64 now, int cpu, struct sched_avg *sa,
-		  unsigned long weight, int running, struct rt_rq *rt_rq)
+		  unsigned long weight, int running, struct cfs_rq *cfs_rq)
 {
-	u64 delta, scaled_delta, periods;
-	u32 contrib;
-	unsigned int delta_w, scaled_delta_w, decayed = 0;
-	unsigned long scale_freq, scale_cpu;
+	u64 delta;
 
 	delta = now - sa->last_update_time;
 	/*
@@ -321,64 +327,27 @@ __update_load_avg(u64 now, int cpu, struct sched_avg *sa,
 		return 0;
 	sa->last_update_time = now;
 
-	scale_freq = arch_scale_freq_capacity(NULL, cpu);
-	scale_cpu = arch_scale_cpu_capacity(NULL, cpu);
+	/*
+	 * Now we know we crossed measurement unit boundaries. The *_avg
+	 * accrues by two steps:
+	 *
+	 * Step 1: accumulate *_sum since last_update_time. If we haven't
+	 * crossed period boundaries, finish.
+	 */
+	if (!accumulate_sum(delta, cpu, sa, weight, running, cfs_rq))
+		return 0;
 
-	trace_sched_contrib_scale_f(cpu, scale_freq, scale_cpu);
-
-	/* delta_w is the amount already accumulated against our next period */
-	delta_w = sa->period_contrib;
-	if (delta + delta_w >= 1024) {
-		decayed = 1;
-
-		/* how much left for next period will start over, we don't know yet */
-		sa->period_contrib = 0;
-
-		/*
-		 * Now that we know we're crossing a period boundary, figure
-		 * out how much from delta we need to complete the current
-		 * period and accrue it.
-		 */
-		delta_w = 1024 - delta_w;
-		scaled_delta_w = cap_scale(delta_w, scale_freq);
-		if (weight)
-			sa->load_sum += weight * scaled_delta_w;
-		if (running)
-			sa->util_sum += scaled_delta_w * scale_cpu;
-
-		delta -= delta_w;
-
-		/* Figure out how many additional periods this update spans */
-		periods = delta / 1024;
-		delta %= 1024;
-
-		sa->load_sum = decay_load(sa->load_sum, periods + 1);
-		sa->util_sum = decay_load((u64)(sa->util_sum), periods + 1);
-
-		/* Efficiently calculate \sum (1..n_period) 1024*y^i */
-		contrib = __compute_runnable_contrib(periods);
-		contrib = cap_scale(contrib, scale_freq);
-		if (weight)
-			sa->load_sum += weight * contrib;
-		if (running)
-			sa->util_sum += contrib * scale_cpu;
+	/*
+	 * Step 2: update *_avg.
+	 */
+	sa->load_avg = div_u64(sa->load_sum, LOAD_AVG_MAX);
+	if (cfs_rq) {
+		cfs_rq->runnable_load_avg =
+			div_u64(cfs_rq->runnable_load_sum, LOAD_AVG_MAX);
 	}
+	sa->util_avg = sa->util_sum / LOAD_AVG_MAX;
 
-	/* Remainder of delta accrued against u_0` */
-	scaled_delta = cap_scale(delta, scale_freq);
-	if (weight)
-		sa->load_sum += weight * scaled_delta;
-	if (running)
-		sa->util_sum += scaled_delta * scale_cpu;
-
-	sa->period_contrib += delta;
-
-	if (decayed) {
-		sa->load_avg = div_u64(sa->load_sum, LOAD_AVG_MAX);
-		sa->util_avg = sa->util_sum / LOAD_AVG_MAX;
-	}
-
-	return decayed;
+	return 1;
 }
 
 void rt_rq_util_change(struct rt_rq *rt_rq)
@@ -2092,20 +2061,6 @@ static void check_preempt_curr_rt(struct rq *rq, struct task_struct *p, int flag
 #endif
 }
 
-#ifdef CONFIG_SMP
-static void sched_rt_update_capacity_req(struct rq *rq)
-{
-	if (!sched_freq())
-		return;
-
-	set_rt_cpu_capacity(rq->cpu, 1, rq->rt.avg.util_avg);
-}
-#else
-static inline void sched_rt_update_capacity_req(struct rq *rq)
-{ }
-
-#endif
-
 static struct sched_rt_entity *pick_next_rt_entity(struct rq *rq,
 						   struct rt_rq *rt_rq)
 {
@@ -2214,7 +2169,6 @@ pick_next_task_rt(struct rq *rq, struct task_struct *prev, struct pin_cookie coo
 		 * This value will be the used as an estimation of the next
 		 * activity.
 		 */
-		sched_rt_update_capacity_req(rq);
 		return NULL;
 	}
 
@@ -2812,7 +2766,9 @@ retry:
 	}
 
 	deactivate_task(rq, next_task, 0);
+	next_task->on_rq = TASK_ON_RQ_MIGRATING;
 	set_task_cpu(next_task, lowest_rq->cpu);
+	next_task->on_rq = TASK_ON_RQ_QUEUED;
 	activate_task(lowest_rq, next_task, 0);
 	ret = 1;
 
@@ -3084,7 +3040,9 @@ static void pull_rt_task(struct rq *this_rq)
 			resched = true;
 
 			deactivate_task(src_rq, p, 0);
+			p->on_rq = TASK_ON_RQ_MIGRATING;
 			set_task_cpu(p, this_cpu);
+			p->on_rq = TASK_ON_RQ_QUEUED;
 			activate_task(this_rq, p, 0);
 			/*
 			 * We continue with the search, just in
@@ -3279,9 +3237,6 @@ static void task_tick_rt(struct rq *rq, struct task_struct *p, int queued)
 
 		update_rt_load_avg(now, rt_se, rt_rq, cpu_of(rq_of_rt_rq(rt_rq)));
 	}
-
-	if (rq->rt.rt_nr_running)
-		sched_rt_update_capacity_req(rq);
 
 	watchdog(rq, p);
 

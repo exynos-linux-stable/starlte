@@ -454,9 +454,19 @@ static void scr_white_maptbls_init(struct mdnie_info *mdnie)
 		maptbl_init(&mdnie->scr_white_maptbl[i]);
 }
 
+static bool stop_samsung;
 static void mdnie_update_scr_white_mode(struct mdnie_info *mdnie)
 {
 	int mdnie_mode = mdnie_current_state(mdnie);
+
+	if (stop_samsung) {
+		if (mdnie->props.update_sensorRGB) {
+			mdnie->props.scr_white_mode = SCR_WHITE_MODE_SENSOR_RGB;
+			mdnie->props.update_sensorRGB = false;
+		}
+
+		return;
+	}
 
 	if (mdnie_mode == MDNIE_SCENARIO_MODE) {
 		if ((IS_LDU_MODE(mdnie)) && (mdnie->props.scenario != EBOOK_MODE)) {
@@ -1185,6 +1195,44 @@ static ssize_t afc_store(struct device *dev,
 }
 #endif
 
+static ssize_t rgb_show(struct device *dev,
+		struct device_attribute *attr, char *buf)
+{
+	struct mdnie_info *mdnie = dev_get_drvdata(dev);
+
+	return snprintf(buf, PAGE_SIZE, "%d %d %d\n", mdnie->props.cur_wrgb[0],
+			mdnie->props.cur_wrgb[1], mdnie->props.cur_wrgb[2]);
+}
+
+static ssize_t rgb_store(struct device *dev,
+		struct device_attribute *attr, const char *buf, size_t count)
+{
+	struct mdnie_info *mdnie = dev_get_drvdata(dev);
+	unsigned int white_red, white_green, white_blue;
+	int ret;
+
+	ret = sscanf(buf, "%d %d %d",
+		&white_red, &white_green, &white_blue);
+	if (ret < 0)
+		return ret;
+
+	 dev_info(dev, "%s, white_r %d, white_g %d, white_b %d\n",
+			 __func__, white_red, white_green, white_blue);
+
+	stop_samsung = !(white_red == 255 && white_green == 255 && white_blue == 255);
+
+	mutex_lock(&mdnie->lock);
+	mdnie->props.ssr_wrgb[0] = white_red;
+	mdnie->props.ssr_wrgb[1] = white_green;
+	mdnie->props.ssr_wrgb[2] = white_blue;
+	mdnie->props.update_sensorRGB = true;
+	scr_white_maptbl_init(mdnie, MDNIE_SENSOR_RGB_MAPTBL);
+	mutex_unlock(&mdnie->lock);
+	mdnie_update(mdnie);
+
+	return count;
+}
+
 struct device_attribute mdnie_dev_attrs[] = {
 	__PANEL_ATTR_RW(mode, 0664),
 	__PANEL_ATTR_RW(scenario, 0664),
@@ -1205,6 +1253,7 @@ struct device_attribute mdnie_dev_attrs[] = {
 #ifdef CONFIG_SUPPORT_AFC
 	__PANEL_ATTR_RW(afc, 0664),
 #endif
+	__PANEL_ATTR_RW(rgb, 0664),
 };
 
 int mdnie_enable(struct mdnie_info *mdnie)
