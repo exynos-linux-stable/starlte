@@ -1053,13 +1053,6 @@ out:
 	return ret;
 }
 
-static int cpu_down_maps_locked(unsigned int cpu, enum cpuhp_state target)
-{
-	if (cpu_hotplug_disabled)
-		return -EBUSY;
-	return _cpu_down(cpu, 0, target);
-}
-
 static int takedown_cpus(const struct cpumask *down_cpus)
 {
 	int err, cpu;
@@ -1230,6 +1223,13 @@ out:
 	cpuset_wait_for_hotplug();
 
 	return ret;
+}
+
+static int cpu_down_maps_locked(unsigned int cpu, enum cpuhp_state target)
+{
+	if (cpu_hotplug_disabled)
+		return -EBUSY;
+	return _cpu_down(cpu, 0, target);
 }
 
 static int do_cpu_down(unsigned int cpu, enum cpuhp_state target)
