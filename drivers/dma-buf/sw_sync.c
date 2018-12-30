@@ -104,6 +104,7 @@ struct sync_timeline *sync_timeline_create(const char *name)
 
 	return obj;
 }
+EXPORT_SYMBOL(sync_timeline_create);
 
 static void sync_timeline_free(struct kref *kref)
 {
@@ -120,10 +121,11 @@ static void sync_timeline_get(struct sync_timeline *obj)
 	kref_get(&obj->kref);
 }
 
-static void sync_timeline_put(struct sync_timeline *obj)
+void sync_timeline_put(struct sync_timeline *obj)
 {
 	kref_put(&obj->kref, sync_timeline_free);
 }
+EXPORT_SYMBOL(sync_timeline_put);
 
 /**
  * sync_timeline_signal() - signal a status change on a sync_timeline
@@ -133,7 +135,7 @@ static void sync_timeline_put(struct sync_timeline *obj)
  * A sync implementation should call this any time one of it's fences
  * has signaled or has an error condition.
  */
-static void sync_timeline_signal(struct sync_timeline *obj, unsigned int inc)
+void sync_timeline_signal(struct sync_timeline *obj, unsigned int inc)
 {
 	unsigned long flags;
 	struct sync_pt *pt, *next;
@@ -152,6 +154,7 @@ static void sync_timeline_signal(struct sync_timeline *obj, unsigned int inc)
 
 	spin_unlock_irqrestore(&obj->child_list_lock, flags);
 }
+EXPORT_SYMBOL(sync_timeline_signal);
 
 /**
  * sync_pt_create() - creates a sync pt
@@ -164,7 +167,7 @@ static void sync_timeline_signal(struct sync_timeline *obj, unsigned int inc)
  * the generic sync_timeline struct. Returns the sync_pt object or
  * NULL in case of error.
  */
-static struct sync_pt *sync_pt_create(struct sync_timeline *obj, int size,
+struct sync_pt *sync_pt_create(struct sync_timeline *obj, int size,
 			     unsigned int value)
 {
 	unsigned long flags;
@@ -186,6 +189,7 @@ static struct sync_pt *sync_pt_create(struct sync_timeline *obj, int size,
 	spin_unlock_irqrestore(&obj->child_list_lock, flags);
 	return pt;
 }
+EXPORT_SYMBOL(sync_pt_create);
 
 static const char *timeline_fence_get_driver_name(struct fence *fence)
 {
@@ -199,9 +203,10 @@ static const char *timeline_fence_get_timeline_name(struct fence *fence)
 	return parent->name;
 }
 
-static void timeline_fence_release(struct fence *fence)
+static void timeline_fence_defer_release(struct work_struct *wq)
 {
-	struct sync_pt *pt = fence_to_sync_pt(fence);
+	struct sync_pt *pt = container_of(wq, struct sync_pt, defer_wq);
+	struct fence *fence = &pt->base;
 	struct sync_timeline *parent = fence_parent(fence);
 	unsigned long flags;
 
@@ -213,6 +218,15 @@ static void timeline_fence_release(struct fence *fence)
 
 	sync_timeline_put(parent);
 	fence_free(fence);
+}
+
+static void timeline_fence_release(struct fence *fence)
+{
+	struct sync_pt *pt = fence_to_sync_pt(fence);
+
+	INIT_WORK(&pt->defer_wq, timeline_fence_defer_release);
+
+	schedule_work(&pt->defer_wq);
 }
 
 static bool timeline_fence_signaled(struct fence *fence)

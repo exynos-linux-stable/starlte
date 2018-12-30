@@ -92,7 +92,13 @@ struct inet_request_sock {
 				wscale_ok  : 1,
 				ecn_ok	   : 1,
 				acked	   : 1,
+#ifdef CONFIG_MPTCP
+				no_srccheck: 1,
+				mptcp_rqsk : 1,
+				saw_mpc    : 1;
+#else
 				no_srccheck: 1;
+#endif
 	kmemcheck_bitfield_end(flags);
 	u32                     ir_mark;
 	union {
@@ -206,7 +212,11 @@ struct inet_sock {
 				transparent:1,
 				mc_all:1,
 				nodefrag:1;
-	__u8			bind_address_no_port:1;
+	__u8			bind_address_no_port:1,
+				defer_connect:1; /* Indicates that fastopen_connect is set
+						  * and cookie exists so we defer connect
+						  * until first data frame is written
+						  */
 	__u8			rcv_tos;
 	__u8			convert_csum;
 	int			uc_index;

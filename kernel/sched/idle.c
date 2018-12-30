@@ -9,6 +9,7 @@
 #include <linux/mm.h>
 #include <linux/stackprotector.h>
 #include <linux/suspend.h>
+#include <linux/cpu_pm.h>
 
 #include <asm/tlb.h>
 
@@ -218,6 +219,7 @@ static void cpu_idle_loop(void)
 		 */
 
 		__current_set_polling();
+		cpu_pm_enter_pre();
 		quiet_vmstat();
 		tick_nohz_idle_enter();
 
@@ -258,6 +260,7 @@ static void cpu_idle_loop(void)
 		 * This is required because for polling idle loops we will
 		 * not have had an IPI to fold the state for us.
 		 */
+		cpu_pm_exit_post();
 		preempt_set_need_resched();
 		tick_nohz_idle_exit();
 		__current_clr_polling();

@@ -338,12 +338,27 @@ static int tmc_probe(struct amba_device *adev, const struct amba_id *id)
 	drvdata->memwidth = tmc_get_memwidth(devid);
 
 	if (drvdata->config_type == TMC_CONFIG_TYPE_ETR) {
+		u32 reg[2];
+		u32 offset;
+
 		if (np)
 			ret = of_property_read_u32(np,
 						   "arm,buffer-size",
 						   &drvdata->size);
 		if (ret)
 			drvdata->size = SZ_1M;
+
+		ret = of_property_read_u32_array(np, "samsung,cs-sfr", reg, 2);
+		if (!ret) {
+			drvdata->sfr_base = devm_ioremap(dev, reg[0], reg[1]);
+			if (!drvdata->sfr_base)
+				return -EINVAL;
+			of_property_read_u32(np, "samsung,q-offset", &offset);
+			drvdata->q_offset = offset;
+			drvdata->hwacg = true;
+		} else {
+			drvdata->hwacg = false;
+		}
 	} else {
 		drvdata->size = readl_relaxed(drvdata->base + TMC_RSZ) * 4;
 	}
@@ -380,14 +395,22 @@ static int tmc_probe(struct amba_device *adev, const struct amba_id *id)
 	ret = misc_register(&drvdata->miscdev);
 	if (ret)
 		coresight_unregister(drvdata->csdev);
+
+	dev_info(dev, "%s initialized\n", (char *)id->data);
 out:
 	return ret;
 }
 
 static struct amba_id tmc_ids[] = {
 	{
-		.id     = 0x0003b961,
-		.mask   = 0x0003ffff,
+		.id     = 0x000bb961,
+		.mask   = 0x000fffff,
+		.data	= "ETF",
+	},
+	{
+		.id     = 0x000bb962,
+		.mask   = 0x000fffff,
+		.data	= "ETR",
 	},
 	{ 0, 0},
 };

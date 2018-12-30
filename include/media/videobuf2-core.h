@@ -16,6 +16,9 @@
 #include <linux/mutex.h>
 #include <linux/poll.h>
 #include <linux/dma-buf.h>
+#include <linux/sync_file.h>
+
+#include "../../drivers/dma-buf/sync_debug.h"
 
 #define VB2_MAX_FRAME	(32)
 #define VB2_MAX_PLANES	(8)
@@ -247,6 +250,8 @@ struct vb2_buffer {
 	struct vb2_plane	planes[VB2_MAX_PLANES];
 	u64			timestamp;
 
+	struct sync_file	*acquire_fence;
+
 	/* private: internal use only
 	 *
 	 * state:		current buffer state; do not change
@@ -414,7 +419,7 @@ struct vb2_buf_ops {
 	void (*fill_user_buffer)(struct vb2_buffer *vb, void *pb);
 	int (*fill_vb2_buffer)(struct vb2_buffer *vb, const void *pb,
 				struct vb2_plane *planes);
-	void (*copy_timestamp)(struct vb2_buffer *vb, const void *pb);
+	void (*copy_timestamp)(struct vb2_buffer *vb, void *pb);
 };
 
 /**
@@ -489,6 +494,9 @@ struct vb2_buf_ops {
  *		when a buffer with the V4L2_BUF_FLAG_LAST is dequeued.
  * @fileio:	file io emulator internal data, used only if emulator is active
  * @threadio:	thread io internal data, used only if thread is active
+ * @timeline:  monotonic timeline of Android sync that signals the release
+ *     fences
+ * @timeline_max: the timestamp of the most recent release fence
  */
 struct vb2_queue {
 	unsigned int			type;
@@ -540,6 +548,9 @@ struct vb2_queue {
 
 	struct vb2_fileio_data		*fileio;
 	struct vb2_threadio_data	*threadio;
+
+	struct sync_timeline		*timeline;
+	u32				timeline_max;
 
 #ifdef CONFIG_VIDEO_ADV_DEBUG
 	/*

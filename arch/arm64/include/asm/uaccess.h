@@ -20,6 +20,7 @@
 
 #include <asm/alternative.h>
 #include <asm/kernel-pgtable.h>
+#include <asm/mmu.h>
 #include <asm/sysreg.h>
 
 #ifndef __ASSEMBLY__
@@ -33,6 +34,7 @@
 #include <linux/thread_info.h>
 
 #include <asm/cpufeature.h>
+#include <asm/processor.h>
 #include <asm/ptrace.h>
 #include <asm/errno.h>
 #include <asm/memory.h>
@@ -63,10 +65,7 @@ struct exception_table_entry
 
 extern int fixup_exception(struct pt_regs *regs);
 
-#define KERNEL_DS	(-1UL)
 #define get_ds()	(KERNEL_DS)
-
-#define USER_DS		TASK_SIZE_64
 #define get_fs()	(current_thread_info()->addr_limit)
 
 static inline void set_fs(mm_segment_t fs)
@@ -91,22 +90,32 @@ static inline void set_fs(mm_segment_t fs)
  * Returns 1 if the range is valid, 0 otherwise.
  *
  * This is equivalent to the following test:
- * (u65)addr + (u65)size <= current->addr_limit
- *
- * This needs 65-bit arithmetic.
+ * (u65)addr + (u65)size <= (u65)current->addr_limit + 1
  */
-#define __range_ok(addr, size)						\
-({									\
-	unsigned long __addr = (unsigned long __force)(addr);		\
-	unsigned long flag, roksum;					\
-	__chk_user_ptr(addr);						\
-	asm("adds %1, %1, %3; ccmp %1, %4, #2, cc; cset %0, ls"		\
-		: "=&r" (flag), "=&r" (roksum)				\
-		: "1" (__addr), "Ir" (size),				\
-		  "r" (current_thread_info()->addr_limit)		\
-		: "cc");						\
-	flag;								\
-})
+static inline unsigned long __range_ok(unsigned long addr, unsigned long size)
+{
+	unsigned long limit = current_thread_info()->addr_limit;
+
+	__chk_user_ptr(addr);
+	asm volatile(
+	// A + B <= C + 1 for all A,B,C, in four easy steps:
+	// 1: X = A + B; X' = X % 2^64
+	"	adds	%0, %0, %2\n"
+	// 2: Set C = 0 if X > 2^64, to guarantee X' > C in step 4
+	"	csel	%1, xzr, %1, hi\n"
+	// 3: Set X' = ~0 if X >= 2^64. For X == 2^64, this decrements X'
+	//    to compensate for the carry flag being set in step 4. For
+	//    X > 2^64, X' merely has to remain nonzero, which it does.
+	"	csinv	%0, %0, xzr, cc\n"
+	// 4: For X < 2^64, this gives us X' - C - 1 <= 0, where the -1
+	//    comes from the carry in being clear. Otherwise, we are
+	//    testing X' - C == 0, subject to the previous adjustments.
+	"	sbcs	xzr, %0, %1\n"
+	"	cset	%0, ls\n"
+	: "+r" (addr), "+r" (limit) : "Ir" (size) : "cc");
+
+	return addr;
+}
 
 /*
  * When dealing with data aborts, watchpoints, or instruction traps we may end
@@ -115,7 +124,7 @@ static inline void set_fs(mm_segment_t fs)
  */
 #define untagged_addr(addr)		sign_extend64(addr, 55)
 
-#define access_ok(type, addr, size)	__range_ok(addr, size)
+#define access_ok(type, addr, size)	__range_ok((unsigned long)(addr), size)
 #define user_addr_max			get_fs
 
 #define _ASM_EXTABLE(from, to)						\
@@ -130,17 +139,23 @@ static inline void set_fs(mm_segment_t fs)
 #ifdef CONFIG_ARM64_SW_TTBR0_PAN
 static inline void __uaccess_ttbr0_disable(void)
 {
-	unsigned long ttbr;
+	unsigned long flags, ttbr;
 
+	local_irq_save(flags);
+	ttbr = read_sysreg(ttbr1_el1);
+	ttbr &= ~TTBR_ASID_MASK;
 	/* reserved_ttbr0 placed at the end of swapper_pg_dir */
-	ttbr = read_sysreg(ttbr1_el1) + SWAPPER_DIR_SIZE;
-	write_sysreg(ttbr, ttbr0_el1);
+	write_sysreg(ttbr + SWAPPER_DIR_SIZE, ttbr0_el1);
 	isb();
+	/* Set reserved ASID */
+	write_sysreg(ttbr, ttbr1_el1);
+	isb();
+	local_irq_restore(flags);
 }
 
 static inline void __uaccess_ttbr0_enable(void)
 {
-	unsigned long flags;
+	unsigned long flags, ttbr0, ttbr1;
 
 	/*
 	 * Disable interrupts to avoid preemption between reading the 'ttbr0'
@@ -148,7 +163,17 @@ static inline void __uaccess_ttbr0_enable(void)
 	 * roll-over and an update of 'ttbr0'.
 	 */
 	local_irq_save(flags);
-	write_sysreg(current_thread_info()->ttbr0, ttbr0_el1);
+	ttbr0 = READ_ONCE(current_thread_info()->ttbr0);
+
+	/* Restore active ASID */
+	ttbr1 = read_sysreg(ttbr1_el1);
+	ttbr1 &= ~TTBR_ASID_MASK;		/* safety measure */
+	ttbr1 |= ttbr0 & TTBR_ASID_MASK;
+	write_sysreg(ttbr1, ttbr1_el1);
+	isb();
+
+	/* Restore user page table */
+	write_sysreg(ttbr0, ttbr0_el1);
 	isb();
 	local_irq_restore(flags);
 }
@@ -435,51 +460,62 @@ extern __must_check long strnlen_user(const char __user *str, long n);
 #ifdef CONFIG_ARM64_SW_TTBR0_PAN
 	.macro	__uaccess_ttbr0_disable, tmp1
 	mrs	\tmp1, ttbr1_el1		// swapper_pg_dir
+	bic     \tmp1, \tmp1, #TTBR_ASID_MASK
 	add	\tmp1, \tmp1, #SWAPPER_DIR_SIZE	// reserved_ttbr0 at the end of swapper_pg_dir
 	msr	ttbr0_el1, \tmp1		// set reserved TTBR0_EL1
 	isb
+	sub     \tmp1, \tmp1, #SWAPPER_DIR_SIZE
+	msr     ttbr1_el1, \tmp1                // set reserved ASID
+	isb
 	.endm
 
-	.macro	__uaccess_ttbr0_enable, tmp1
+	.macro	__uaccess_ttbr0_enable, tmp1, tmp2
 	get_thread_info \tmp1
 	ldr	\tmp1, [\tmp1, #TSK_TI_TTBR0]	// load saved TTBR0_EL1
+	mrs     \tmp2, ttbr1_el1
+	extr    \tmp2, \tmp2, \tmp1, #48
+	ror     \tmp2, \tmp2, #16
+	msr     ttbr1_el1, \tmp2                // set the active ASID
+	isb
 	msr	ttbr0_el1, \tmp1		// set the non-PAN TTBR0_EL1
 	isb
 	.endm
 
-	.macro	uaccess_ttbr0_disable, tmp1
-alternative_if_not ARM64_HAS_PAN
-	__uaccess_ttbr0_disable \tmp1
-alternative_else_nop_endif
-	.endm
-
-	.macro	uaccess_ttbr0_enable, tmp1, tmp2
+	.macro	uaccess_ttbr0_disable, tmp1, tmp2
 alternative_if_not ARM64_HAS_PAN
 	save_and_disable_irq \tmp2		// avoid preemption
-	__uaccess_ttbr0_enable \tmp1
+	__uaccess_ttbr0_disable \tmp1
 	restore_irq \tmp2
 alternative_else_nop_endif
 	.endm
+
+	.macro	uaccess_ttbr0_enable, tmp1, tmp2, tmp3
+alternative_if_not ARM64_HAS_PAN
+	save_and_disable_irq \tmp3		// avoid preemption
+	__uaccess_ttbr0_enable \tmp1, \tmp2
+	restore_irq \tmp3
+alternative_else_nop_endif
+	.endm
 #else
-	.macro	uaccess_ttbr0_disable, tmp1
+	.macro	uaccess_ttbr0_disable, tmp1, tmp2
 	.endm
 
-	.macro	uaccess_ttbr0_enable, tmp1, tmp2
+	.macro	uaccess_ttbr0_enable, tmp1, tmp2, tmp3
 	.endm
 #endif
 
 /*
  * These macros are no-ops when UAO is present.
  */
-	.macro	uaccess_disable_not_uao, tmp1
-	uaccess_ttbr0_disable \tmp1
+	.macro	uaccess_disable_not_uao, tmp1, tmp2
+	uaccess_ttbr0_disable \tmp1, \tmp2
 alternative_if ARM64_ALT_PAN_NOT_UAO
 	SET_PSTATE_PAN(1)
 alternative_else_nop_endif
 	.endm
 
-	.macro	uaccess_enable_not_uao, tmp1, tmp2
-	uaccess_ttbr0_enable \tmp1, \tmp2
+	.macro	uaccess_enable_not_uao, tmp1, tmp2, tmp3
+	uaccess_ttbr0_enable \tmp1, \tmp2, \tmp3
 alternative_if ARM64_ALT_PAN_NOT_UAO
 	SET_PSTATE_PAN(0)
 alternative_else_nop_endif

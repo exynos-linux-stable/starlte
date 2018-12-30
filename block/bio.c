@@ -589,8 +589,17 @@ void __bio_clone_fast(struct bio *bio, struct bio *bio_src)
 	bio->bi_opf = bio_src->bi_opf;
 	bio->bi_iter = bio_src->bi_iter;
 	bio->bi_io_vec = bio_src->bi_io_vec;
+#ifdef CONFIG_JOURNAL_DATA_TAG
+	bio->bi_flags |= bio_src->bi_flags & (1 << BIO_JOURNAL);
+#endif
 
 	bio_clone_blkcg_association(bio, bio_src);
+	bio->fmp_ci.bi_dio_inode = bio_src->fmp_ci.bi_dio_inode;
+	bio->fmp_ci.private_enc_mode = bio_src->fmp_ci.private_enc_mode;
+	bio->fmp_ci.private_algo_mode = bio_src->fmp_ci.private_algo_mode;
+	bio->fmp_ci.key = bio_src->fmp_ci.key;
+	bio->fmp_ci.key_length = bio_src->fmp_ci.key_length;
+	bio->bi_sec_flags = bio_src->bi_sec_flags;
 }
 EXPORT_SYMBOL(__bio_clone_fast);
 
@@ -672,6 +681,15 @@ struct bio *bio_clone_bioset(struct bio *bio_src, gfp_t gfp_mask,
 	bio->bi_opf		= bio_src->bi_opf;
 	bio->bi_iter.bi_sector	= bio_src->bi_iter.bi_sector;
 	bio->bi_iter.bi_size	= bio_src->bi_iter.bi_size;
+#ifdef CONFIG_JOURNAL_DATA_TAG
+	bio->bi_flags |= bio_src->bi_flags & (1 << BIO_JOURNAL);
+#endif
+	bio->fmp_ci.bi_dio_inode	= bio_src->fmp_ci.bi_dio_inode;
+	bio->fmp_ci.private_enc_mode	= bio_src->fmp_ci.private_enc_mode;
+	bio->fmp_ci.private_algo_mode	= bio_src->fmp_ci.private_algo_mode;
+	bio->fmp_ci.key		= bio_src->fmp_ci.key;
+	bio->fmp_ci.key_length		= bio_src->fmp_ci.key_length;
+	bio->bi_sec_flags	= bio_src->bi_sec_flags;
 
 	switch (bio_op(bio)) {
 	case REQ_OP_DISCARD:

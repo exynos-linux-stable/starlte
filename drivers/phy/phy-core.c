@@ -273,6 +273,83 @@ out:
 }
 EXPORT_SYMBOL_GPL(phy_exit);
 
+int phy_vendor_set(struct phy *phy, int is_enable, int is_cancel)
+{
+	int ret;
+
+	if (!phy || !phy->ops->vendor_set)
+		return 0;
+
+	ret = phy->ops->vendor_set(phy, is_enable, is_cancel);
+	if (ret < 0) {
+		dev_err(&phy->dev, "phy vendor setting failed --> %d\n", ret);
+	} else {
+		ret = 0; /* Override possible ret == -ENOTSUPP */
+	}
+	return ret;
+}
+EXPORT_SYMBOL_GPL(phy_vendor_set);
+
+int phy_ilbk(struct phy *phy)
+{
+	int ret;
+
+	if (!phy || !phy->ops->ilbk)
+		return 0;
+
+	ret = phy->ops->ilbk(phy);
+	if (ret < 0)
+		dev_err(&phy->dev, "phy ilbk failed --> %d\n", ret);
+	else
+		ret = 0; /* Override possible ret == -ENOTSUPP */
+
+	return ret;
+}
+EXPORT_SYMBOL_GPL(phy_ilbk);
+
+int phy_tune(struct phy *phy, int phy_state)
+{
+	int ret;
+
+	if (!phy || !phy->ops->tune)
+		return 0;
+
+	ret = phy->ops->tune(phy, phy_state);
+	if (ret < 0) {
+		dev_err(&phy->dev, "phy tune failed --> %d\n", ret);
+	} else {
+		ret = 0; /* Override possible ret == -ENOTSUPP */
+	}
+	return ret;
+}
+EXPORT_SYMBOL_GPL(phy_tune);
+
+void phy_conn(struct phy *phy, int option)
+{
+	if (!phy || !phy->ops->conn)
+		return;
+
+	phy->ops->conn(phy, option);
+
+	return;
+}
+EXPORT_SYMBOL_GPL(phy_conn);
+
+int phy_set(struct phy *phy, int option, void *info)
+{
+	int ret;
+
+	if (!phy || !phy->ops->set)
+		return 0;
+
+	ret = phy->ops->set(phy, option, info);
+	if (ret < 0)
+		dev_err(&phy->dev, "phy set failed --> %d\n", ret);
+
+	return ret;
+}
+EXPORT_SYMBOL_GPL(phy_set);
+
 int phy_power_on(struct phy *phy)
 {
 	int ret = 0;
@@ -287,8 +364,16 @@ int phy_power_on(struct phy *phy)
 	}
 
 	ret = phy_pm_runtime_get_sync(phy);
-	if (ret < 0 && ret != -ENOTSUPP)
+	if (ret < 0 && ret != -ENOTSUPP) {
+		/*
+		 * Temporary add code for debugging and preventing ITMON error
+		 * currently pm_runtime_enable() is called unexpectedly.
+		 * so when phy_power_on is called, -ENOSYS error is returned.
+		 * this code will be removed after finding root cause.
+		 */
+		dev_info(&phy->dev, "%s: %d(%d)\n", __func__, __LINE__, ret);
 		goto err_pm_sync;
+	}
 
 	ret = 0; /* Override possible ret == -ENOTSUPP */
 

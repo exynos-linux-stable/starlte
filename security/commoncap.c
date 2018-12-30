@@ -35,6 +35,10 @@
 #include <linux/android_aid.h>
 #endif
 
+#ifdef CONFIG_LOD_SEC
+#include <linux/linux_on_dex.h>
+#endif
+
 /*
  * If a non-root user executes a setuid-root binary in
  * !secure(SECURE_NOROOT) mode, then we raise capabilities.
@@ -58,7 +62,7 @@ static void warn_setuid_and_fcaps_mixed(const char *fname)
 }
 
 /**
- * __cap_capable - Determine whether a task has a particular effective capability
+ * cap_capable - Determine whether a task has a particular effective capability
  * @cred: The credentials to use
  * @ns:  The user namespace in which we need the capability
  * @cap: The capability to check for
@@ -72,11 +76,36 @@ static void warn_setuid_and_fcaps_mixed(const char *fname)
  * cap_has_capability() returns 0 when a task has a capability, but the
  * kernel's capable() and has_capability() returns 1 for this case.
  */
-int __cap_capable(const struct cred *cred, struct user_namespace *targ_ns,
+int cap_capable(const struct cred *cred, struct user_namespace *targ_ns,
 		int cap, int audit)
 {
 	struct user_namespace *ns = targ_ns;
 
+#ifdef CONFIG_ANDROID_PARANOID_NETWORK
+	if (cap == CAP_NET_RAW && in_egroup_p(AID_NET_RAW))
+		return 0;
+	if (cap == CAP_NET_ADMIN && in_egroup_p(AID_NET_ADMIN))
+		return 0;
+#endif
+
+/*
+ * Check the LoD capabilities
+ * If no cap, return EPERM immediately, skipping following checks
+ * If has cap, continue namespace check
+ */
+#ifdef CONFIG_LOD_SEC
+	if (cred_is_LOD(cred)) {
+		if (cap_raised(CAP_LOD_SET, cap) == 0){
+#ifndef CONFIG_SAMSUNG_PRODUCT_SHIP
+			if (cap != 21) //ignore 21 avoid flooding
+				printk(KERN_ERR "LOD cap_capable: blocking CAP %d PROC %s "
+					"PID %d UID %d\n", cap, current->comm, current->pid,
+					cred->uid.val);
+#endif
+			return -EPERM;
+		}
+	}
+#endif
 	/* See if cred has the capability in the target user namespace
 	 * by examining the target user namespace and all of the target
 	 * user namespace's parents.
@@ -107,27 +136,6 @@ int __cap_capable(const struct cred *cred, struct user_namespace *targ_ns,
 	/* We never get here */
 }
 
-int cap_capable(const struct cred *cred, struct user_namespace *targ_ns,
-		int cap, int audit)
-{
-	int ret = __cap_capable(cred, targ_ns, cap, audit);
-
-#ifdef CONFIG_ANDROID_PARANOID_NETWORK
-	if (ret != 0 && cap == CAP_NET_RAW && in_egroup_p(AID_NET_RAW)) {
-		printk("Process %s granted CAP_NET_RAW from Android group net_raw.\n", current->comm);
-		printk("  Please update the .rc file to explictly set 'capabilities NET_RAW'\n");
-		printk("  Implicit grants are deprecated and will be removed in the future.\n");
-		return 0;
-	}
-	if (ret != 0 && cap == CAP_NET_ADMIN && in_egroup_p(AID_NET_ADMIN)) {
-		printk("Process %s granted CAP_NET_ADMIN from Android group net_admin.\n", current->comm);
-		printk("  Please update the .rc file to explictly set 'capabilities NET_ADMIN'\n");
-		printk("  Implicit grants are deprecated and will be removed in the future.\n");
-		return 0;
-	}
-#endif
-	return ret;
-}
 /**
  * cap_settime - Determine whether the current process may set the system clock
  * @ts: The time to set

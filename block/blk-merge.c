@@ -667,6 +667,51 @@ static void blk_account_io_merge(struct request *req)
 	}
 }
 
+static struct inode *get_inode_from_bio(struct bio *bio)
+{
+	if (!bio)
+		return NULL;
+	if (!bio_has_data((struct bio *)bio))
+		return NULL;
+	if (!bio->bi_io_vec)
+		return NULL;
+	if (!bio->bi_io_vec->bv_page)
+		return NULL;
+	if (PageAnon(bio->bi_io_vec->bv_page)) {
+		struct inode *inode;
+
+		/* Using direct-io (O_DIRECT) without page cache */
+		inode = bio->fmp_ci.bi_dio_inode;
+		return inode;
+	}
+
+	if (!bio->bi_io_vec->bv_page->mapping)
+		return NULL;
+	if (!bio->bi_io_vec->bv_page->mapping->host)
+		return NULL;
+	return bio->bi_io_vec->bv_page->mapping->host;
+}
+
+static bool inode_is_data_equal(void *data1, void *data2)
+{
+	/* pointer comparison*/
+	return data1 == data2;
+}
+
+static bool allow_merge_bio_for_encryption(struct bio *bio1, struct bio *bio2)
+{
+	struct inode *inode1 = NULL;
+	struct inode *inode2 = NULL;
+
+	inode1 = get_inode_from_bio(bio1);
+	inode2 = get_inode_from_bio(bio2);
+
+	if (!inode_is_data_equal(inode1, inode2))
+		return false;
+
+	return true;
+}
+
 /*
  * Has to be called with the request spinlock acquired
  */
@@ -692,6 +737,9 @@ static int attempt_merge(struct request_queue *q, struct request *req,
 
 	if (req_op(req) == REQ_OP_WRITE_SAME &&
 	    !blk_write_same_mergeable(req->bio, next->bio))
+		return 0;
+
+	if (!allow_merge_bio_for_encryption(req->bio, next->bio))
 		return 0;
 
 	/*
@@ -803,6 +851,16 @@ bool blk_rq_merge_ok(struct request *rq, struct bio *bio)
 	if (req_op(rq) == REQ_OP_WRITE_SAME &&
 	    !blk_write_same_mergeable(rq->bio, bio))
 		return false;
+
+	if (!allow_merge_bio_for_encryption(rq->bio, bio))
+		return false;
+
+#ifdef CONFIG_JOURNAL_DATA_TAG
+	/* journal tagged bio can only be merged to REQ_META request */
+	if (((bio_flagged(bio, BIO_JOURNAL)) && !(rq->cmd_flags & REQ_META))
+	    || (!(bio_flagged(bio, BIO_JOURNAL)) && (rq->cmd_flags & REQ_META)))
+		return false;
+#endif
 
 	return true;
 }

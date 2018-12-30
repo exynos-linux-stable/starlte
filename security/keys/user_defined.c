@@ -107,7 +107,7 @@ int user_update(struct key *key, struct key_preparsed_payload *prep)
 	/* attach the new data, displacing the old */
 	key->expiry = prep->expiry;
 	if (key_is_positive(key))
-		zap = dereference_key_locked(key);
+		zap = rcu_dereference_key(key);
 	rcu_assign_keypointer(key, prep->payload.data[0]);
 	prep->payload.data[0] = NULL;
 
@@ -123,7 +123,7 @@ EXPORT_SYMBOL_GPL(user_update);
  */
 void user_revoke(struct key *key)
 {
-	struct user_key_payload *upayload = user_key_payload_locked(key);
+	struct user_key_payload *upayload = key->payload.data[0];
 
 	/* clear the quota */
 	key_payload_reserve(key, 0);
@@ -143,6 +143,11 @@ void user_destroy(struct key *key)
 {
 	struct user_key_payload *upayload = key->payload.data[0];
 
+#ifdef CONFIG_CRYPTO_FIPS
+	if (upayload) {
+		memset(upayload->data, 0, upayload->datalen);
+	}
+#endif
 	kfree(upayload);
 }
 
@@ -169,7 +174,7 @@ long user_read(const struct key *key, char __user *buffer, size_t buflen)
 	const struct user_key_payload *upayload;
 	long ret;
 
-	upayload = user_key_payload_locked(key);
+	upayload = user_key_payload(key);
 	ret = upayload->datalen;
 
 	/* we can return the data as is */

@@ -47,10 +47,23 @@
 #include "ext4.h"
 #include <trace/events/android_fs.h>
 
+#include <crypto/fmp.h>
+
 static inline bool ext4_bio_encrypted(struct bio *bio)
 {
 #ifdef CONFIG_EXT4_FS_ENCRYPTION
+#ifdef CONFIG_FS_PRIVATE_ENCRYPTION
+	struct page *page;
+
+	page = bio->bi_io_vec->bv_page;
+
+	if (page->mapping->fmp_ci.private_algo_mode)
+		return false;
+	else
+		return unlikely(bio->bi_private != NULL);
+#else
 	return unlikely(bio->bi_private != NULL);
+#endif /* CONFIG_FS_PRIVATE_ENCRYPTION */
 #else
 	return false;
 #endif
@@ -279,9 +292,13 @@ int ext4_mpage_readpages(struct address_space *mapping,
 		}
 		if (bio == NULL) {
 			struct fscrypt_ctx *ctx = NULL;
-
+#ifdef CONFIG_FS_PRIVATE_ENCRYPTION
+			if (ext4_encrypted_inode(inode) &&
+			    S_ISREG(inode->i_mode) && !inode->i_mapping->fmp_ci.private_algo_mode) {
+#else
 			if (ext4_encrypted_inode(inode) &&
 			    S_ISREG(inode->i_mode)) {
+#endif /* CONFIG_FS_PRIVATE_ENCRYPTION */
 				ctx = fscrypt_get_ctx(inode, GFP_NOFS);
 				if (IS_ERR(ctx))
 					goto set_error_page;

@@ -334,6 +334,13 @@ static int __vb2_queue_alloc(struct vb2_queue *q, enum vb2_memory memory,
 	struct vb2_buffer *vb;
 	int ret;
 
+	q->timeline_max = 0;
+	q->timeline = sync_timeline_create("vb2");
+	if (!q->timeline) {
+		dprintk(1, "Failed to create timeline\n");
+		return 0;
+	}
+
 	for (buffer = 0; buffer < num_buffers; ++buffer) {
 		/* Allocate videobuf buffer structures */
 		vb = kzalloc(q->buf_struct_size, GFP_KERNEL);
@@ -525,6 +532,12 @@ static int __vb2_queue_free(struct vb2_queue *q, unsigned int buffers)
 		q->memory = 0;
 		INIT_LIST_HEAD(&q->queued_list);
 	}
+
+	if (q->timeline) {
+		sync_timeline_put(q->timeline);
+		q->timeline = NULL;
+	}
+
 	return 0;
 }
 
@@ -924,6 +937,7 @@ void vb2_buffer_done(struct vb2_buffer *vb, enum vb2_buffer_state state)
 		vb->state = state;
 	}
 	atomic_dec(&q->owned_by_drv_count);
+	sync_timeline_signal(q->timeline, 1);
 	spin_unlock_irqrestore(&q->done_lock, flags);
 
 	trace_vb2_buf_done(q, vb);
@@ -1636,6 +1650,7 @@ EXPORT_SYMBOL_GPL(vb2_core_dqbuf);
  */
 static void __vb2_queue_cancel(struct vb2_queue *q)
 {
+	struct vb2_buffer *vb;
 	unsigned int i;
 
 	/*
@@ -1663,6 +1678,13 @@ static void __vb2_queue_cancel(struct vb2_queue *q)
 	q->start_streaming_called = 0;
 	q->queued_count = 0;
 	q->error = 0;
+
+	list_for_each_entry(vb, &q->queued_list, queued_entry) {
+		if (vb->acquire_fence) {
+			fput(vb->acquire_fence->file);
+			vb->acquire_fence = NULL;
+		}
+	}
 
 	/*
 	 * Remove all buffers from videobuf's list...

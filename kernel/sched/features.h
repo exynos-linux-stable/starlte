@@ -78,3 +78,16 @@ SCHED_FEAT(ENERGY_AWARE, true)
 #else
 SCHED_FEAT(ENERGY_AWARE, false)
 #endif
+
+/*
+ * SchedTune. Use Performance/Energy filtering function to evaluate the trade
+ * off between energy consumption and performance impact when comparing
+ * previous and next candidate CPUs.
+ */
+SCHED_FEAT(ENERGY_FILTER, false)
+
+#ifdef CONFIG_SCHED_EHMP
+SCHED_FEAT(EXYNOS_HMP, true)
+#else
+SCHED_FEAT(EXYNOS_HMP, false)
+#endif

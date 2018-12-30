@@ -329,7 +329,7 @@ static void fscache_objlist_config(struct fscache_objlist_data *data)
 	config = 0;
 	rcu_read_lock();
 
-	confkey = user_key_payload_rcu(key);
+	confkey = user_key_payload(key);
 	if (!confkey) {
 		/* key was revoked */
 		rcu_read_unlock();
