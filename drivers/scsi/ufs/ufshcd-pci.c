@@ -106,6 +106,7 @@ static void ufshcd_pci_remove(struct pci_dev *pdev)
 
 	disable_irq(pdev->irq);
 	ufshcd_remove(hba);
+	ufshcd_dealloc_host(hba);
 	pci_set_drvdata(pdev, NULL);
 }
 
@@ -150,6 +151,7 @@ ufshcd_pci_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 	err = ufshcd_init(hba, mmio_base, pdev->irq);
 	if (err) {
 		dev_err(&pdev->dev, "Initialization failed\n");
+		ufshcd_dealloc_host(hba);
 		return err;
 	}
 

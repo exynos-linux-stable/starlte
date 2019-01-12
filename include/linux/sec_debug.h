@@ -501,7 +501,7 @@ struct tsp_dump_callbacks {
 
 extern unsigned int get_smpl_warn_number(void);
 extern void (*mach_restart)(enum reboot_mode mode, const char *cmd);
-extern int sec_debug_force_error(const char *val, struct kernel_param *kp);
+extern int sec_debug_force_error(const char *val, const struct kernel_param *kp);
 
 #ifdef CONFIG_SEC_DUMP_SUMMARY
 

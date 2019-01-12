@@ -1396,6 +1396,29 @@ static int __close_session(struct ceph_mds_client *mdsc,
 	return request_close_session(mdsc, session);
 }
 
+static bool drop_negative_children(struct dentry *dentry)
+{
+	struct dentry *child;
+	bool all_negative = true;
+
+	if (!d_is_dir(dentry))
+		goto out;
+
+	spin_lock(&dentry->d_lock);
+	list_for_each_entry(child, &dentry->d_subdirs, d_child) {
+		if (d_really_is_positive(child)) {
+			all_negative = false;
+			break;
+		}
+	}
+	spin_unlock(&dentry->d_lock);
+
+	if (all_negative)
+		shrink_dcache_parent(dentry);
+out:
+	return all_negative;
+}
+
 /*
  * Trim old(er) caps.
  *
@@ -1441,16 +1464,27 @@ static int trim_caps_cb(struct inode *inode, struct ceph_cap *cap, void *arg)
 	if ((used | wanted) & ~oissued & mine)
 		goto out;   /* we need these caps */
 
-	session->s_trim_caps--;
 	if (oissued) {
 		/* we aren't the only cap.. just remove us */
 		__ceph_remove_cap(cap, true);
+		session->s_trim_caps--;
 	} else {
+		struct dentry *dentry;
 		/* try dropping referring dentries */
 		spin_unlock(&ci->i_ceph_lock);
-		d_prune_aliases(inode);
-		dout("trim_caps_cb %p cap %p  pruned, count now %d\n",
-		     inode, cap, atomic_read(&inode->i_count));
+		dentry = d_find_any_alias(inode);
+		if (dentry && drop_negative_children(dentry)) {
+			int count;
+			dput(dentry);
+			d_prune_aliases(inode);
+			count = atomic_read(&inode->i_count);
+			if (count == 1)
+				session->s_trim_caps--;
+			dout("trim_caps_cb %p cap %p pruned, count now %d\n",
+			     inode, cap, count);
+		} else {
+			dput(dentry);
+		}
 		return 0;
 	}
 
@@ -3949,14 +3983,24 @@ static struct ceph_auth_handshake *get_authorizer(struct ceph_connection *con,
 	return auth;
 }
 
-
-static int verify_authorizer_reply(struct ceph_connection *con, int len)
+static int add_authorizer_challenge(struct ceph_connection *con,
+				    void *challenge_buf, int challenge_buf_len)
 {
 	struct ceph_mds_session *s = con->private;
 	struct ceph_mds_client *mdsc = s->s_mdsc;
 	struct ceph_auth_client *ac = mdsc->fsc->client->monc.auth;
 
-	return ceph_auth_verify_authorizer_reply(ac, s->s_auth.authorizer, len);
+	return ceph_auth_add_authorizer_challenge(ac, s->s_auth.authorizer,
+					    challenge_buf, challenge_buf_len);
+}
+
+static int verify_authorizer_reply(struct ceph_connection *con)
+{
+	struct ceph_mds_session *s = con->private;
+	struct ceph_mds_client *mdsc = s->s_mdsc;
+	struct ceph_auth_client *ac = mdsc->fsc->client->monc.auth;
+
+	return ceph_auth_verify_authorizer_reply(ac, s->s_auth.authorizer);
 }
 
 static int invalidate_authorizer(struct ceph_connection *con)
@@ -4012,6 +4056,7 @@ static const struct ceph_connection_operations mds_con_ops = {
 	.put = con_put,
 	.dispatch = dispatch,
 	.get_authorizer = get_authorizer,
+	.add_authorizer_challenge = add_authorizer_challenge,
 	.verify_authorizer_reply = verify_authorizer_reply,
 	.invalidate_authorizer = invalidate_authorizer,
 	.peer_reset = peer_reset,

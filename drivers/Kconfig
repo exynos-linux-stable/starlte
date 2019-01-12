@@ -212,6 +212,9 @@ source "drivers/hwtracing/intel_th/Kconfig"
 
 source "drivers/fpga/Kconfig"
 
+source "drivers/tee/Kconfig"
+
+
 source "drivers/trace/Kconfig"
 
 source "drivers/vision/Kconfig"
@@ -237,4 +240,5 @@ source "drivers/gator_5.27/Kconfig"
 source "drivers/five/Kconfig"
 
 source "drivers/mpsd/Kconfig"
+
 endmenu

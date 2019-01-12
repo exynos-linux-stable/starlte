@@ -1,11 +1,11 @@
 /*
  * Hash algorithms.
- * 
+ *
  * Copyright (c) 2008 Herbert Xu <herbert@gondor.apana.org.au>
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License as published by the Free
- * Software Foundation; either version 2 of the License, or (at your option) 
+ * Software Foundation; either version 2 of the License, or (at your option)
  * any later version.
  *
  */
@@ -87,6 +87,8 @@ static inline bool crypto_shash_alg_has_setkey(struct shash_alg *alg)
 {
 	return alg->setkey != shash_no_setkey;
 }
+
+bool crypto_hash_alg_has_setkey(struct hash_alg_common *halg);
 
 int crypto_init_ahash_spawn(struct crypto_ahash_spawn *spawn,
 			    struct hash_alg_common *alg,
@@ -255,4 +257,3 @@ static inline struct crypto_shash *__crypto_shash_cast(struct crypto_tfm *tfm)
 }
 
 #endif	/* _CRYPTO_INTERNAL_HASH_H */
-

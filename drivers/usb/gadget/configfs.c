@@ -384,7 +384,6 @@ static ssize_t gadget_dev_desc_UDC_store(struct config_item *item,
 		ret = unregister_gadget(gi);
 		if (ret)
 			goto err;
-		/* prevent memory leak */
 		kfree(name);
 	} else {
 		if (gi->composite.gadget_driver.udc_name) {
@@ -1538,7 +1537,7 @@ static void android_work(struct work_struct *data)
 	if (!android_device && IS_ERR(android_device)) {
 		pr_info("usb: cannot send uevent because android_device not available \n");
 		return;
-	}	
+	}
 	spin_lock_irqsave(&cdev->lock, flags);
 	if (cdev->config)
 		status[1] = true;
@@ -2104,7 +2103,7 @@ static struct config_group *gadgets_make(
 	if (android_device_create(gi) < 0) {
 		kfree(gi->composite.gadget_driver.function);
 		goto err;
-	}	
+	}
 
 	return &gi->group;
 

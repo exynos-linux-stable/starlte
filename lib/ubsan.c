@@ -42,6 +42,7 @@ const char *type_check_kinds[] = {
 #endif
 
 #define VALUE_LENGTH 40
+
 static bool was_reported(struct source_location *location)
 {
 	return test_and_set_bit(REPORTED_BIT, &location->reported);
@@ -153,7 +154,7 @@ static void ubsan_sec_report(int isprologue, struct source_location *loc, int rT
 		ubsaninfo.rType = rType;
 		snprintf(ubsaninfo.filename, FILESIZE, "%s\n",loc->file_name);
 	} else {
-		sec_debug_ubsan_handler(&ubsaninfo);	
+		sec_debug_ubsan_handler(&ubsaninfo);
 	}
 }
 #endif
@@ -183,7 +184,6 @@ static void ubsan_epilogue(unsigned long *flags)
 	dump_stack();
 	pr_err("========================================"
 		"========================================\n");
-
 	spin_unlock_irqrestore(&report_lock, *flags);
 	current->in_ubsan--;
 #if defined(CONFIG_SEC_DEBUG_UBSAN)
@@ -300,17 +300,17 @@ void __ubsan_handle_divrem_overflow(struct overflow_data *data,
 }
 EXPORT_SYMBOL(__ubsan_handle_divrem_overflow);
 
-static void handle_null_ptr_deref(struct type_mismatch_data *data)
+static void handle_null_ptr_deref(struct type_mismatch_data_common *data)
 {
 	unsigned long flags;
 
-	if (suppress_report(&data->location))
+	if (suppress_report(data->location))
 		return;
 
 #if defined(CONFIG_SEC_DEBUG_UBSAN)
-	ubsan_prologue(&data->location, &flags, UBSAN_RTYPE_NULL_PTR_DEREF);
+	ubsan_prologue(data->location, &flags, UBSAN_RTYPE_NULL_PTR_DEREF);
 #else
-	ubsan_prologue(&data->location, &flags);
+	ubsan_prologue(data->location, &flags);
 #endif
 
 	pr_err("%s null pointer of type %s\n",
@@ -320,18 +320,18 @@ static void handle_null_ptr_deref(struct type_mismatch_data *data)
 	ubsan_epilogue(&flags);
 }
 
-static void handle_missaligned_access(struct type_mismatch_data *data,
+static void handle_misaligned_access(struct type_mismatch_data_common *data,
 				unsigned long ptr)
 {
 	unsigned long flags;
 
-	if (suppress_report(&data->location))
+	if (suppress_report(data->location))
 		return;
 
 #if defined(CONFIG_SEC_DEBUG_UBSAN)
-	ubsan_prologue(&data->location, &flags, UBSAN_RTYPE_MISALIGNED_ACCESS);
+	ubsan_prologue(data->location, &flags, UBSAN_RTYPE_MISALIGNED_ACCESS);
 #else
-	ubsan_prologue(&data->location, &flags);
+	ubsan_prologue(data->location, &flags);
 #endif
 
 	pr_err("%s misaligned address %p for type %s\n",
@@ -342,18 +342,18 @@ static void handle_missaligned_access(struct type_mismatch_data *data,
 	ubsan_epilogue(&flags);
 }
 
-static void handle_object_size_mismatch(struct type_mismatch_data *data,
+static void handle_object_size_mismatch(struct type_mismatch_data_common *data,
 					unsigned long ptr)
 {
 	unsigned long flags;
 
-	if (suppress_report(&data->location))
+	if (suppress_report(data->location))
 		return;
 
 #if defined(CONFIG_SEC_DEBUG_UBSAN)
-	ubsan_prologue(&data->location, &flags, UBSAN_RTYPE_OBJECT_SIZE_MISMATCH);
+	ubsan_prologue(data->location, &flags, UBSAN_RTYPE_OBJECT_SIZE_MISMATCH);
 #else
-	ubsan_prologue(&data->location, &flags);
+	ubsan_prologue(data->location, &flags);
 #endif
 	pr_err("%s address %p with insufficient space\n",
 		type_check_kinds[data->type_check_kind],
@@ -362,18 +362,46 @@ static void handle_object_size_mismatch(struct type_mismatch_data *data,
 	ubsan_epilogue(&flags);
 }
 
-void __ubsan_handle_type_mismatch(struct type_mismatch_data *data,
+static void ubsan_type_mismatch_common(struct type_mismatch_data_common *data,
 				unsigned long ptr)
 {
 
 	if (!ptr)
 		handle_null_ptr_deref(data);
 	else if (data->alignment && !IS_ALIGNED(ptr, data->alignment))
-		handle_missaligned_access(data, ptr);
+		handle_misaligned_access(data, ptr);
 	else
 		handle_object_size_mismatch(data, ptr);
 }
+
+void __ubsan_handle_type_mismatch(struct type_mismatch_data *data,
+				unsigned long ptr)
+{
+	struct type_mismatch_data_common common_data = {
+		.location = &data->location,
+		.type = data->type,
+		.alignment = data->alignment,
+		.type_check_kind = data->type_check_kind
+	};
+
+	ubsan_type_mismatch_common(&common_data, ptr);
+}
 EXPORT_SYMBOL(__ubsan_handle_type_mismatch);
+
+void __ubsan_handle_type_mismatch_v1(struct type_mismatch_data_v1 *data,
+				unsigned long ptr)
+{
+
+	struct type_mismatch_data_common common_data = {
+		.location = &data->location,
+		.type = data->type,
+		.alignment = 1UL << data->log_alignment,
+		.type_check_kind = data->type_check_kind
+	};
+
+	ubsan_type_mismatch_common(&common_data, ptr);
+}
+EXPORT_SYMBOL(__ubsan_handle_type_mismatch_v1);
 
 void __ubsan_handle_nonnull_return(struct nonnull_return_data *data)
 {
@@ -425,6 +453,7 @@ void __ubsan_handle_out_of_bounds(struct out_of_bounds_data *data,
 {
 	unsigned long flags;
 	char index_str[VALUE_LENGTH];
+
 	if (suppress_report(&data->location))
 		return;
 
@@ -485,8 +514,7 @@ void __ubsan_handle_shift_out_of_bounds(struct shift_out_of_bounds_data *data,
 EXPORT_SYMBOL(__ubsan_handle_shift_out_of_bounds);
 
 
-void __noreturn
-__ubsan_handle_builtin_unreachable(struct unreachable_data *data)
+void __ubsan_handle_builtin_unreachable(struct unreachable_data *data)
 {
 	unsigned long flags;
 

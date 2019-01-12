@@ -553,7 +553,7 @@ static void simulate_BAD_SCHED(char *arg)
 	}
 }
 
-int sec_debug_force_error(const char *val, struct kernel_param *kp)
+int sec_debug_force_error(const char *val, const struct kernel_param *kp)
 {
 	int i;
 	char *temp;

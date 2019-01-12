@@ -446,50 +446,9 @@ static int ext4_valid_extent_entries(struct inode *inode,
 	return 1;
 }
 
-/* for debugging if ext4_extent is not valid */
-static void
-ext4_ext_show_eh(struct inode *inode, struct ext4_extent_header *eh)
-{
-	int i;
-
-	if (eh == NULL)
-		return;
-	printk(KERN_ERR "eh_magic : 0x%x eh_entries : %u "
-			"eh_max : %u eh_depth : %u \n",
-			le16_to_cpu(eh->eh_magic), le16_to_cpu(eh->eh_entries),
-			le16_to_cpu(eh->eh_max), le16_to_cpu(eh->eh_depth));
-
-	if (le16_to_cpu(eh->eh_depth) == 0) {
-		/* leaf entries */
-		struct ext4_extent *ex = EXT_FIRST_EXTENT(eh);
-
-		printk(KERN_ERR "Displaying leaf extents for inode %lu\n",
-				inode->i_ino);
-
-		for (i = 0; i < 4; i++, ex++) {
-			printk(KERN_ERR "leaf - block : %d / length : [%d]%d /"
-				" pblock : %llu\n", le32_to_cpu(ex->ee_block),
-				ext4_ext_is_unwritten(ex),
-				ext4_ext_get_actual_len(ex),
-				ext4_ext_pblock(ex));
-		}
-	} else {
-		struct ext4_extent_idx *ei = EXT_FIRST_INDEX(eh);
-
-		printk(KERN_ERR "Displaying index extents for inode %lu\n",
-				inode->i_ino);
-
-		for (i = 0; i < 4; i++, ei++) {
-			printk(KERN_ERR "idx - block : %d / pblock : %llu\n",
-					le32_to_cpu(ei->ei_block),
-					ext4_idx_pblock(ei));
-		}
-	}
-}
-
 static int __ext4_ext_check(const char *function, unsigned int line,
 			    struct inode *inode, struct ext4_extent_header *eh,
-			    int depth, ext4_fsblk_t pblk, struct buffer_head *bh)
+			    int depth, ext4_fsblk_t pblk)
 {
 	const char *error_msg;
 	int max = 0, err = -EFSCORRUPTED;
@@ -533,13 +492,6 @@ static int __ext4_ext_check(const char *function, unsigned int line,
 	return 0;
 
 corrupted:
-	if (bh) {
-		printk(KERN_ERR "Print invalid extent bh: %s\n", error_msg);
-		print_bh(inode->i_sb, bh, 0, EXT4_BLOCK_SIZE(inode->i_sb));
-	} else {
-		printk(KERN_ERR "Print invalid extent entries\n");
-		ext4_ext_show_eh(inode, eh);
-	}
 	ext4_error_inode(inode, function, line, 0,
 			 "pblk %llu bad header/extent: %s - magic %x, "
 			 "entries %u, max %u(%u), depth %u(%u)",
@@ -551,7 +503,7 @@ corrupted:
 }
 
 #define ext4_ext_check(inode, eh, depth, pblk)			\
-	__ext4_ext_check(__func__, __LINE__, (inode), (eh), (depth), (pblk), (NULL))
+	__ext4_ext_check(__func__, __LINE__, (inode), (eh), (depth), (pblk))
 
 int ext4_ext_check_inode(struct inode *inode)
 {
@@ -579,7 +531,7 @@ __read_extent_tree_block(const char *function, unsigned int line,
 	if (buffer_verified(bh) && !(flags & EXT4_EX_FORCE_CACHE))
 		return bh;
 	err = __ext4_ext_check(function, line, inode,
-			       ext_block_hdr(bh), depth, pblk, bh);
+			       ext_block_hdr(bh), depth, pblk);
 	if (err)
 		goto errout;
 	set_buffer_verified(bh);
@@ -929,6 +881,12 @@ ext4_find_extent(struct inode *inode, ext4_lblk_t block,
 
 	eh = ext_inode_hdr(inode);
 	depth = ext_depth(inode);
+	if (depth < 0 || depth > EXT4_MAX_EXTENT_DEPTH) {
+		EXT4_ERROR_INODE(inode, "inode has invalid extent depth: %d",
+				 depth);
+		ret = -EFSCORRUPTED;
+		goto err;
+	}
 
 	if (path) {
 		ext4_ext_drop_refs(path);
@@ -4779,6 +4737,7 @@ retry:
 						    EXT4_INODE_EOFBLOCKS);
 		}
 		ext4_mark_inode_dirty(handle, inode);
+		ext4_update_inode_fsync_trans(handle, inode, 1);
 		ret2 = ext4_journal_stop(handle);
 		if (ret2)
 			break;
@@ -4851,7 +4810,8 @@ static long ext4_zero_range(struct file *file, loff_t offset,
 	}
 
 	if (!(mode & FALLOC_FL_KEEP_SIZE) &&
-	     offset + len > i_size_read(inode)) {
+	    (offset + len > i_size_read(inode) ||
+	     offset + len > EXT4_I(inode)->i_disksize)) {
 		new_size = offset + len;
 		ret = inode_newsize_ok(inode, new_size);
 		if (ret)
@@ -5022,7 +4982,8 @@ long ext4_fallocate(struct file *file, int mode, loff_t offset, loff_t len)
 	}
 
 	if (!(mode & FALLOC_FL_KEEP_SIZE) &&
-	     offset + len > i_size_read(inode)) {
+	    (offset + len > i_size_read(inode) ||
+	     offset + len > EXT4_I(inode)->i_disksize)) {
 		new_size = offset + len;
 		ret = inode_newsize_ok(inode, new_size);
 		if (ret)
@@ -5401,8 +5362,9 @@ ext4_ext_shift_extents(struct inode *inode, handle_t *handle,
 	stop = le32_to_cpu(extent->ee_block);
 
        /*
-	 * In case of left shift, Don't start shifting extents until we make
-	 * sure the hole is big enough to accommodate the shift.
+	* For left shifts, make sure the hole on the left is big enough to
+	* accommodate the shift.  For right shifts, make sure the last extent
+	* won't be shifted beyond EXT_MAX_BLOCKS.
 	*/
 	if (SHIFT == SHIFT_LEFT) {
 		path = ext4_find_extent(inode, start - 1, &path,
@@ -5422,9 +5384,14 @@ ext4_ext_shift_extents(struct inode *inode, handle_t *handle,
 
 		if ((start == ex_start && shift > ex_start) ||
 		    (shift > start - ex_end)) {
-			ext4_ext_drop_refs(path);
-			kfree(path);
-			return -EINVAL;
+			ret = -EINVAL;
+			goto out;
+		}
+	} else {
+		if (shift > EXT_MAX_BLOCKS -
+		    (stop + ext4_ext_get_actual_len(extent))) {
+			ret = -EINVAL;
+			goto out;
 		}
 	}
 

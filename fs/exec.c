@@ -1245,15 +1245,14 @@ killed:
 	return -EAGAIN;
 }
 
-char *get_task_comm(char *buf, struct task_struct *tsk)
+char *__get_task_comm(char *buf, size_t buf_size, struct task_struct *tsk)
 {
-	/* buf must be at least sizeof(tsk->comm) in size */
 	task_lock(tsk);
-	strncpy(buf, tsk->comm, sizeof(tsk->comm));
+	strncpy(buf, tsk->comm, buf_size);
 	task_unlock(tsk);
 	return buf;
 }
-EXPORT_SYMBOL_GPL(get_task_comm);
+EXPORT_SYMBOL_GPL(__get_task_comm);
 
 /*
  * These functions flushes out all traces of the currently running executable
@@ -1275,8 +1274,8 @@ extern struct super_block *vendor_sb;	/* pointer to superblock */
 extern struct super_block *rootfs_sb;	/* pointer to superblock */
 extern int is_recovery;
 
-static int kdp_check_sb_mismatch(struct super_block *sb) 
-{	
+static int kdp_check_sb_mismatch(struct super_block *sb)
+{
 	if(is_recovery) {
 		return 0;
 	}
@@ -1286,17 +1285,17 @@ static int kdp_check_sb_mismatch(struct super_block *sb)
 	}
 	return 0;
 }
-static int invalid_drive(struct linux_binprm * bprm) 
+static int invalid_drive(struct linux_binprm * bprm)
 {
 	struct super_block *sb =  NULL;
 	struct vfsmount *vfsmnt = NULL;
-	
+
 	vfsmnt = bprm->file->f_path.mnt;
-	if(!vfsmnt || 
+	if(!vfsmnt ||
 		!rkp_ro_page((unsigned long)vfsmnt)) {
 		printk("\nInvalid Drive #%s# #%p#\n",bprm->filename, vfsmnt);
 		return 1;
-	} 
+	}
 	sb = vfsmnt->mnt_sb;
 
 	if(kdp_check_sb_mismatch(sb)) {
@@ -1346,7 +1345,7 @@ int flush_old_exec(struct linux_binprm * bprm)
 	acct_arg_size(bprm, 0);
 #ifdef CONFIG_RKP_NS_PROT
 	if(rkp_cred_enable &&
-		is_rkp_priv_task() && 
+		is_rkp_priv_task() &&
 		invalid_drive(bprm)) {
 		panic("\n KDP_NS_PROT: Illegal Execution of file #%s#\n",bprm->filename);
 	}
@@ -1716,8 +1715,7 @@ int search_binary_handler(struct linux_binprm *bprm)
 		if (printable(bprm->buf[0]) && printable(bprm->buf[1]) &&
 		    printable(bprm->buf[2]) && printable(bprm->buf[3]))
 			return retval;
-		if (request_module(
-			      "binfmt-%04x", *(ushort *)(bprm->buf + 2)) < 0)
+		if (request_module("binfmt-%04x", *(ushort *)(bprm->buf + 2)) < 0)
 			return retval;
 		need_retry = false;
 		goto retry;
@@ -1793,7 +1791,7 @@ static int rkp_restrict_fork(struct filename *path)
 	if(!strcmp(path->name,"/system/bin/patchoat")){
 		return 0 ;
 	}
-        /* If the Process is from Linux on Dex, 
+        /* If the Process is from Linux on Dex,
         then no need to reduce privilege */
 #ifdef CONFIG_LOD_SEC
 	if(rkp_is_lod(current)){

@@ -31,6 +31,14 @@ struct sha1_ce_state {
 
 asmlinkage void sha1_ce_transform(struct sha1_ce_state *sst, u8 const *src,
 				  int blocks);
+#ifdef CONFIG_CFI_CLANG
+static inline void __cfi_sha1_ce_transform(struct sha1_state *sst,
+					   u8 const *src, int blocks)
+{
+	sha1_ce_transform((struct sha1_ce_state *)sst, src, blocks);
+}
+#define sha1_ce_transform __cfi_sha1_ce_transform
+#endif
 
 static int sha1_ce_update(struct shash_desc *desc, const u8 *data,
 			  unsigned int len)

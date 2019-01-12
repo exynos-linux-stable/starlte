@@ -200,7 +200,7 @@ static void get_app_name(unsigned int pid, struct app_params_struct *data)
 		return;
 	}
 
-	get_task_comm(data->name, task);
+	__get_task_comm(data->name, TASK_COMM_LEN, task);
 	put_task_struct(task);
 }
 
@@ -1780,7 +1780,7 @@ void get_app_params_snapshot(unsigned int pid,
 		return;
 	}
 
-	get_task_comm(app_params->name, task);
+	__get_task_comm(app_params->name, TASK_COMM_LEN, task);
 	app_params->tgid = (long long)(task->tgid);
 	app_params->flags = (long long)(task->flags);
 	app_params->priority = (long long)(task->prio - MAX_RT_PRIO);
@@ -3914,4 +3914,3 @@ void mpsd_read_exit(void)
 	mutex_destroy(&mpsd_read_lock);
 	pr_info("%s: %s: Done!\n", tag, __func__);
 }
-

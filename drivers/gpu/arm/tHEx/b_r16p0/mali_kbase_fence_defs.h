@@ -47,11 +47,12 @@
 
 /* HACK MALI_SEC_INTEGRATION should check status in LT(4.9) otherwise fence timeout occur frequently*/
 //#if (KERNEL_VERSION(4, 9, 68) <= LINUX_VERSION_CODE)
-#if (KERNEL_VERSION(4, 10, 0) <= LINUX_VERSION_CODE)
-#define dma_fence_get_status(a) (fence_is_signaled(a) ? (a)->error ?: 1 : 0)
-#else
-#define dma_fence_get_status(a) (fence_is_signaled(a) ? (a)->status ?: 1 : 0)
-#endif
+//#if (KERNEL_VERSION(4, 10, 0) <= LINUX_VERSION_CODE)
+//#define dma_fence_get_status(a) (fence_is_signaled(a) ? (a)->error ?: 1 : 0)
+//#else
+//#define dma_fence_get_status(a) (fence_is_signaled(a) ? (a)->status ?: 1 : 0)
+//#endif
+#define dma_fence_get_status(a) (fence_get_status(a))
 
 #else
 

@@ -150,7 +150,7 @@ static void __copy_timestamp(struct vb2_buffer *vb, void *pb)
 			struct sync_pt *pt;
 			struct sync_file *sync_file;
 
-			pt = sync_pt_create(q->timeline, sizeof(*pt), q->timeline_max);
+			pt = sync_pt_create(q->timeline, q->timeline_max);
 			if (!pt) {
 				dprintk(1, "qbuf: failed to create sync_pt\n");
 				put_unused_fd(fd);

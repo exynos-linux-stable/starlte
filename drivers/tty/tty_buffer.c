@@ -446,7 +446,7 @@ EXPORT_SYMBOL_GPL(tty_prepare_flip_string);
  *	Callers other than flush_to_ldisc() need to exclude the kworker
  *	from concurrent use of the line discipline, see paste_selection().
  *
- *	Returns the number of bytes not processed
+ *	Returns the number of bytes processed
  */
 int tty_ldisc_receive_buf(struct tty_ldisc *ld, unsigned char *p,
 			  char *f, int count)
@@ -458,6 +458,8 @@ int tty_ldisc_receive_buf(struct tty_ldisc *ld, unsigned char *p,
 		if (count && ld->ops->receive_buf)
 			ld->ops->receive_buf(ld->tty, p, f, count);
 	}
+	if (count > 0)
+		memset(p, 0, count);
 	return count;
 }
 EXPORT_SYMBOL_GPL(tty_ldisc_receive_buf);

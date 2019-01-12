@@ -2485,6 +2485,15 @@ int ocfs2_inode_lock_with_page(struct inode *inode,
 	ret = ocfs2_inode_lock_full(inode, ret_bh, ex, OCFS2_LOCK_NONBLOCK);
 	if (ret == -EAGAIN) {
 		unlock_page(page);
+		/*
+		 * If we can't get inode lock immediately, we should not return
+		 * directly here, since this will lead to a softlockup problem.
+		 * The method is to get a blocking lock and immediately unlock
+		 * before returning, this can avoid CPU resource waste due to
+		 * lots of retries, and benefits fairness in getting lock.
+		 */
+		if (ocfs2_inode_lock(inode, ret_bh, ex) == 0)
+			ocfs2_inode_unlock(inode, ex);
 		ret = AOP_TRUNCATED_PAGE;
 	}
 
@@ -2590,6 +2599,10 @@ void ocfs2_inode_unlock_tracker(struct inode *inode,
 	struct ocfs2_lock_res *lockres;
 
 	lockres = &OCFS2_I(inode)->ip_inode_lockres;
+	/* had_lock means that the currect process already takes the cluster
+	 * lock previously. If had_lock is 1, we have nothing to do here, and
+	 * it will get unlocked where we got the lock.
+	 */
 	if (!had_lock) {
 		ocfs2_remove_holder(lockres, oh);
 		ocfs2_inode_unlock(inode, ex);
