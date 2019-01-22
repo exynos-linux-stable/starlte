@@ -1186,7 +1186,7 @@ static int move_specific_task(struct task_struct *target, struct ontime_env *env
 		if (!can_migrate(p, env))
 			continue;
 
-		if (p != target)
+		if (p != target) 
 			continue;
 
 		move_task(p, env);
@@ -1602,8 +1602,8 @@ pure_initcall(init_ontime);
 /**********************************************************************
  * cpu selection                                                      *
  **********************************************************************/
-unsigned long boosted_task_util(struct task_struct *p);
-int select_energy_cpu_idx(struct energy_env *eenv);
+unsigned long boosted_task_util(struct task_struct *task);
+int energy_diff(struct energy_env *eenv);
 
 static inline int find_best_target(struct sched_domain *sd, struct task_struct *p)
 {
@@ -1704,7 +1704,7 @@ static inline int find_best_target(struct sched_domain *sd, struct task_struct *
 				.util_delta     = task_util(p),
 				.src_cpu        = task_cpu(p),
 				.dst_cpu        = i,
-				.p              = p,
+				.task           = p,
 			};
 
 			if (eenv.src_cpu == eenv.dst_cpu)
@@ -1715,7 +1715,7 @@ static inline int find_best_target(struct sched_domain *sd, struct task_struct *
 				&& cpu_util(eenv.dst_cpu) < capacity_orig_of(eenv.dst_cpu))
 				return eenv.dst_cpu;
 
-			nrg_diff = select_energy_cpu_idx(&eenv);
+			nrg_diff = energy_diff(&eenv);
 			if (nrg_diff < min_nrg_diff) {
 				target_cpu = i;
 				min_nrg_diff = nrg_diff;
@@ -1755,14 +1755,14 @@ static int select_energy_cpu(struct sched_domain *sd, struct task_struct *p,
 			.util_delta     = task_util(p),
 			.src_cpu        = prev_cpu,
 			.dst_cpu        = target_cpu,
-			.p              = p,
+			.task           = p,
 		};
 
 		/* Not enough spare capacity on previous cpu */
 		if (cpu_overutilized(prev_cpu))
 			goto out;
 
-		if (select_energy_cpu_idx(&eenv) >= 0) {
+		if (energy_diff(&eenv) >= 0) {
 			target_cpu = prev_cpu;
 			goto out;
 		}
