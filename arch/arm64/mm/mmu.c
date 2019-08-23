@@ -118,6 +118,7 @@ static phys_addr_t __init early_pgtable_alloc(void)
 spinlock_t ro_rkp_pages_lock = __SPIN_LOCK_UNLOCKED();
 char ro_pages_stat[RO_PAGES] = {0};
 unsigned int ro_alloc_avail = 0;
+unsigned int ro_alloc_n = 0;
 
 static phys_addr_t rkp_ro_alloc_phys(void)
 {
@@ -141,6 +142,7 @@ static phys_addr_t rkp_ro_alloc_phys(void)
 		ro_pages_stat[ro_alloc_avail] = true;
 		ro_alloc_avail = (ro_alloc_avail + 1) % RO_PAGES;
 	}
+	ro_alloc_n++;
 	spin_unlock_irqrestore(&ro_rkp_pages_lock, flags);
 
 	return alloc_addr;
@@ -168,6 +170,7 @@ void *rkp_ro_alloc(void)
 		ro_pages_stat[ro_alloc_avail] = true;
 		ro_alloc_avail = (ro_alloc_avail + 1) % RO_PAGES;
 	}
+	ro_alloc_n++;
 	spin_unlock_irqrestore(&ro_rkp_pages_lock, flags);
 
 	return alloc_addr;
@@ -182,6 +185,7 @@ void rkp_ro_free(void *free_addr)
 	spin_lock_irqsave(&ro_rkp_pages_lock, flags);
 	ro_pages_stat[i] = 0;
 	ro_alloc_avail = i;
+	ro_alloc_n--;
 	spin_unlock_irqrestore(&ro_rkp_pages_lock, flags);
 }
 
