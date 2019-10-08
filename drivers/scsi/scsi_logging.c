@@ -17,61 +17,19 @@
 #include <scsi/scsi_eh.h>
 #include <scsi/scsi_dbg.h>
 
-#if defined(CONFIG_SEC_ABC)  
-#include <linux/sti/abc_common.h>  
-#endif   
-
-#define SCSI_LOG_SPOOLSIZE 4096
-
-#if (SCSI_LOG_SPOOLSIZE / SCSI_LOG_BUFSIZE) > BITS_PER_LONG
-#warning SCSI logging bitmask too large
+#if defined(CONFIG_SEC_ABC)
+#include <linux/sti/abc_common.h>
 #endif
-
-struct scsi_log_buf {
-	char buffer[SCSI_LOG_SPOOLSIZE];
-	unsigned long map;
-};
-
-static DEFINE_PER_CPU(struct scsi_log_buf, scsi_format_log);
 
 static char *scsi_log_reserve_buffer(size_t *len)
 {
-	struct scsi_log_buf *buf;
-	unsigned long map_bits = sizeof(buf->buffer) / SCSI_LOG_BUFSIZE;
-	unsigned long idx = 0;
-
-	preempt_disable();
-	buf = this_cpu_ptr(&scsi_format_log);
-	idx = find_first_zero_bit(&buf->map, map_bits);
-	if (likely(idx < map_bits)) {
-		while (test_and_set_bit(idx, &buf->map)) {
-			idx = find_next_zero_bit(&buf->map, map_bits, idx);
-			if (idx >= map_bits)
-				break;
-		}
-	}
-	if (WARN_ON(idx >= map_bits)) {
-		preempt_enable();
-		return NULL;
-	}
-	*len = SCSI_LOG_BUFSIZE;
-	return buf->buffer + idx * SCSI_LOG_BUFSIZE;
+	*len = 128;
+	return kmalloc(*len, GFP_ATOMIC);
 }
 
 static void scsi_log_release_buffer(char *bufptr)
 {
-	struct scsi_log_buf *buf;
-	unsigned long idx;
-	int ret;
-
-	buf = this_cpu_ptr(&scsi_format_log);
-	if (bufptr >= buf->buffer &&
-	    bufptr < buf->buffer + SCSI_LOG_SPOOLSIZE) {
-		idx = (bufptr - buf->buffer) / SCSI_LOG_BUFSIZE;
-		ret = test_and_clear_bit(idx, &buf->map);
-		WARN_ON(!ret);
-	}
-	preempt_enable();
+	kfree(bufptr);
 }
 
 static inline const char *scmd_name(const struct scsi_cmnd *scmd)
@@ -291,7 +249,7 @@ out_printk:
 	 * 1. issue_LBA_list[] : record LBAs
 	 * 2. issue_region_map : set bit the region
 	 *    ______________________________________________
-	 *    |63|62|61|60| ....    |52|51|50| ....    |1|0|                 
+	 *    |63|62|61|60| ....    |52|51|50| ....    |1|0|
 	 *    ----------------------------------------------
 	 *   1) 0 ~ 51 : per 200MB : total 10400MB region
 	 *   2) 52  : region of 10400MB~ (USERDATA)
@@ -437,9 +395,9 @@ scsi_log_print_sense_hdr(const struct scsi_device *sdev, const char *name,
 	if (sdev->host->by_ufs) {
 		if (sshdr->sense_key == 0x03) {
 			sdev->host->medium_err_cnt++;
-#if defined(CONFIG_SEC_ABC) 
-		sec_abc_send_event("MODULE=storage@ERROR=ufs_medium_err"); 
-#endif 
+#if defined(CONFIG_SEC_ABC)
+		sec_abc_send_event("MODULE=storage@ERROR=ufs_medium_err");
+#endif
 		} else if (sshdr->sense_key == 0x04)
 			sdev->host->hw_err_cnt++;
 	}
