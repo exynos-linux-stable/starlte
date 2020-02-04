@@ -44,7 +44,14 @@ enum ion_heap_type {
 			       * must be last so device specific heaps always
 			       * are at the end of this enum
 			       */
+	ION_HEAP_TYPE_CUSTOM2,
+	ION_NUM_HEAPS = 16,
 };
+/* Exynos specific ION heap types */
+#define ION_HEAP_TYPE_HPA	ION_HEAP_TYPE_CUSTOM
+
+/* Samsung specific ION heap types */
+#define ION_HEAP_TYPE_RBIN	ION_HEAP_TYPE_CUSTOM2
 
 #define ION_NUM_HEAP_IDS		(sizeof(unsigned int) * 8)
 
@@ -64,6 +71,19 @@ enum ion_heap_type {
  * caches must be managed manually
  */
 #define ION_FLAG_CACHED_NEEDS_SYNC 2
+
+#define ION_FLAG_NOZEROED 8		/* Allocated buffer is not initialized
+					   with zero value and userspace is not
+					   able to access the buffer
+					 */
+#define ION_FLAG_PROTECTED 16		/* this buffer would be used in secure
+					   world. if this is set, all cpu accesses
+					   are prohibited.
+					 */
+#define ION_FLAG_SYNC_FORCE 32		/* cache sync forcely at allocation */
+#define ION_FLAG_MAY_HWRENDER 64	/* buffer is cachable but it can be
+					accessd by H/W on both sharable domain, non-sharable domain,
+					so it sholud flush the cache before sharable domain accesses */
 
 /**
  * DOC: Ion Userspace API
@@ -105,6 +125,13 @@ struct ion_allocation_data {
 struct ion_fd_data {
 	ion_user_handle_t handle;
 	int fd;
+};
+
+struct ion_fd_partial_data {
+	ion_user_handle_t handle;
+	int fd;
+	off_t offset;
+	size_t len;
 };
 
 /**
@@ -215,6 +242,7 @@ struct ion_heap_query {
  * this will make the buffer in memory coherent.
  */
 #define ION_IOC_SYNC		_IOWR(ION_IOC_MAGIC, 7, struct ion_fd_data)
+#define ION_IOC_SYNC_PARTIAL	_IOWR(ION_IOC_MAGIC, 9, struct ion_fd_partial_data)
 
 /**
  * DOC: ION_IOC_CUSTOM - call architecture specific ion ioctl

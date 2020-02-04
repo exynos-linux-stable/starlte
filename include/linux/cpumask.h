@@ -103,6 +103,12 @@ extern struct cpumask __cpu_active_mask;
 #define cpu_possible(cpu)	cpumask_test_cpu((cpu), cpu_possible_mask)
 #define cpu_present(cpu)	cpumask_test_cpu((cpu), cpu_present_mask)
 #define cpu_active(cpu)		cpumask_test_cpu((cpu), cpu_active_mask)
+#ifdef CONFIG_SCHED_HMP
+extern struct cpumask hmp_slow_cpu_mask;
+extern struct cpumask hmp_fast_cpu_mask;
+#define num_hmp_fast_cpus()	cpumask_weight(&hmp_fast_cpu_mask)
+#define num_hmp_slow_cpus()	cpumask_weight(&hmp_slow_cpu_mask)
+#endif
 #else
 #define num_online_cpus()	1U
 #define num_possible_cpus()	1U
@@ -295,6 +301,11 @@ static inline void cpumask_set_cpu(unsigned int cpu, struct cpumask *dstp)
 	set_bit(cpumask_check(cpu), cpumask_bits(dstp));
 }
 
+static inline void __cpumask_set_cpu(unsigned int cpu, struct cpumask *dstp)
+{
+       __set_bit(cpumask_check(cpu), cpumask_bits(dstp));
+}
+
 /**
  * cpumask_clear_cpu - clear a cpu in a cpumask
  * @cpu: cpu number (< nr_cpu_ids)
@@ -303,6 +314,11 @@ static inline void cpumask_set_cpu(unsigned int cpu, struct cpumask *dstp)
 static inline void cpumask_clear_cpu(int cpu, struct cpumask *dstp)
 {
 	clear_bit(cpumask_check(cpu), cpumask_bits(dstp));
+}
+
+static inline void __cpumask_clear_cpu(int cpu, struct cpumask *dstp)
+{
+       __clear_bit(cpumask_check(cpu), cpumask_bits(dstp));
 }
 
 /**

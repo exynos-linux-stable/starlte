@@ -25,6 +25,14 @@
 #include <linux/nmi.h>
 #include <linux/console.h>
 #include <linux/bug.h>
+#include <linux/exynos-ss.h>
+
+#include <asm/core_regs.h>
+#include <soc/samsung/exynos-condbg.h>
+
+#ifdef CONFIG_SEC_DUMP_SUMMARY
+#include <linux/sec_debug.h>
+#endif
 
 #define PANIC_TIMER_STEP 100
 #define PANIC_BLINK_SPD 18
@@ -135,7 +143,19 @@ void panic(const char *fmt, ...)
 	int state = 0;
 	int old_cpu, this_cpu;
 	bool _crash_kexec_post_notifiers = crash_kexec_post_notifiers;
+#ifdef CONFIG_SEC_DEBUG_EXTRA_INFO
+	struct pt_regs regs;
 
+	regs.regs[30] = _RET_IP_;
+	regs.pc = regs.regs[30] - sizeof(unsigned int);
+#endif
+	exynos_trace_stop();
+	if (ecd_get_enable() &&
+		ecd_get_debug_panic() &&
+		ecd_get_debug_mode() != MODE_DEBUG) {
+		ecd_printf("Debugging in Panic on ECD\n");
+		ecd_do_break_now();
+	}
 	/*
 	 * Disable local interrupts. This will prevent panic_smp_self_stop
 	 * from deadlocking the first cpu that invokes the panic, since
@@ -162,15 +182,40 @@ void panic(const char *fmt, ...)
 	this_cpu = raw_smp_processor_id();
 	old_cpu  = atomic_cmpxchg(&panic_cpu, PANIC_CPU_INVALID, this_cpu);
 
-	if (old_cpu != PANIC_CPU_INVALID && old_cpu != this_cpu)
+	if (old_cpu != PANIC_CPU_INVALID) {
+		exynos_ss_hook_hardlockup_exit();
 		panic_smp_self_stop();
+	}
 
 	console_verbose();
 	bust_spinlocks(1);
 	va_start(args, fmt);
 	vsnprintf(buf, sizeof(buf), fmt, args);
 	va_end(args);
-	pr_emerg("Kernel panic - not syncing: %s\n", buf);
+
+#ifdef CONFIG_SEC_DEBUG_AUTO_SUMMARY
+	if (buf[strlen(buf) - 1] == '\n')
+		buf[strlen(buf) - 1] = '\0';
+#endif
+#ifdef CONFIG_SEC_DEBUG_EXTRA_INFO
+	if (strncmp(buf, "Fatal exception", 15))
+		sec_debug_set_extra_info_fault(PANIC_FAULT, (unsigned long)regs.pc, &regs);
+#endif
+	ecd_printf("Kernel Panic - not syncing: %s\n", buf);
+	pr_auto(ASL5, "Kernel panic - not syncing: %s\n", buf);
+
+#if !defined(SEC_PRODUCT_SHIP) && defined(CONFIG_RELOCATABLE_KERNEL)
+	{
+		u64 const kernel_offset = kimage_vaddr - KIMAGE_VADDR;
+		u64 kernel_addr = SZ_2G + SZ_512K + kernel_offset;
+
+		pr_emerg("Kernel loaded at: 0x%llx, offset from compile-time address %llx\n",
+		 kernel_addr, kernel_offset);
+	}
+#endif
+
+	exynos_ss_prepare_panic();
+	exynos_ss_dump_panic(buf, (size_t)strnlen(buf, sizeof(buf)));
 #ifdef CONFIG_DEBUG_BUGVERBOSE
 	/*
 	 * Avoid nested stack-dumping if a panic occurs during oops processing
@@ -178,6 +223,11 @@ void panic(const char *fmt, ...)
 	if (!test_taint(TAINT_DIE) && oops_in_progress <= 1)
 		dump_stack();
 #endif
+#ifdef CONFIG_SEC_DUMP_SUMMARY
+		sec_debug_save_panic_info(buf,
+			(unsigned long)__builtin_return_address(0));
+#endif
+	//sysrq_sched_debug_show();
 
 	/*
 	 * If we have crashed and we have a crash kernel loaded let it handle
@@ -196,7 +246,8 @@ void panic(const char *fmt, ...)
 		 * unfortunately means it may not be hardened to work in a
 		 * panic situation.
 		 */
-		smp_send_stop();
+		if (!ecd_get_enable() || ecd_get_debug_mode() != MODE_DEBUG)
+			smp_send_stop();
 	} else {
 		/*
 		 * If we want to do crash dump after notifier calls and
@@ -205,7 +256,6 @@ void panic(const char *fmt, ...)
 		 */
 		crash_smp_send_stop();
 	}
-
 	/*
 	 * Run any panic handlers, including those that might need to
 	 * add information to the kmsg dump output.
@@ -215,6 +265,8 @@ void panic(const char *fmt, ...)
 	/* Call flush even twice. It tries harder with a single online CPU */
 	printk_nmi_flush_on_panic();
 	kmsg_dump(KMSG_DUMP_PANIC);
+
+	exynos_ss_post_panic();
 
 	/*
 	 * If you doubt kdump always works fine in any situation,
@@ -543,12 +595,7 @@ void __warn(const char *file, int line, void *caller, unsigned taint,
 	}
 
 	print_modules();
-
-	if (regs)
-		show_regs(regs);
-	else
-		dump_stack();
-
+	dump_stack();
 	print_oops_end_marker();
 
 	/* Just a warning, don't kill lockdep. */
@@ -595,8 +642,12 @@ EXPORT_SYMBOL(warn_slowpath_null);
  */
 __visible void __stack_chk_fail(void)
 {
+#ifdef CONFIG_SEC_DEBUG
+	BUG();
+#else
 	panic("stack-protector: Kernel stack is corrupted in: %p\n",
 		__builtin_return_address(0));
+#endif
 }
 EXPORT_SYMBOL(__stack_chk_fail);
 

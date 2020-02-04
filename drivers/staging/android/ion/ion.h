@@ -19,7 +19,7 @@
 
 #include <linux/types.h>
 
-#include "../uapi/ion.h"
+#include <uapi/linux/ion.h>
 
 struct ion_handle;
 struct ion_device;
@@ -47,6 +47,7 @@ struct ion_buffer;
  * @size:	size of the heap in bytes if applicable
  * @align:	required alignment in physical memory if applicable
  * @priv:	private info passed from the board file
+ * @untouchable : no access to heap that is always protected
  *
  * Provided by the board file.
  */
@@ -58,6 +59,7 @@ struct ion_platform_heap {
 	size_t size;
 	ion_phys_addr_t align;
 	void *priv;
+	bool untouchable;
 };
 
 /**
@@ -79,6 +81,12 @@ struct ion_platform_data {
  */
 struct ion_client *ion_client_create(struct ion_device *dev,
 				     const char *name);
+
+/**
+ * ion_client_create() -  allocate a client and returns it
+ * @name:		used for debugging
+ */
+struct ion_client *exynos_ion_client_create(const char *name);
 
 /**
  * ion_client_destroy() -  free's a client and all it's handles
@@ -172,5 +180,49 @@ struct ion_handle *ion_import_dma_buf(struct ion_client *client,
  * another exporter is passed in this function will return ERR_PTR(-EINVAL)
  */
 struct ion_handle *ion_import_dma_buf_fd(struct ion_client *client, int fd);
+
+/**
+ * ion_cached_needsync_dmabuf() - check if a dmabuf is cacheable
+ * @dmabuf: a pointer to dma_buf
+ *
+ * Given a dma-buf that is exported by ION, check if the buffer is allocated
+ * with ION_FLAG_CACHED and ION_FLAG_CACHED_NEED_SYNC. If the flags are set
+ * the function returns 1. If it is unset, 0. If the given dmabuf is not
+ * exported by ION, -error is returned.
+ */
+int ion_cached_needsync_dmabuf(struct dma_buf *dmabuf);
+
+/**
+ * ion_may_hwrender_dmabuf() - check if a dmabuf set ION_FLAG_MAY_HWRENDER
+ * @dmabuf: a pointer to dma_buf
+ *
+ * Given a dma-buf that is exported by ION, check if the buffer is allocated
+ * with ION_FLAG_MAY_HWRENDER. If the flags are set the function returns true.
+ * If it is unset, false. If the given dmabuf is not exported by ION,
+ * false is returned.
+ */
+bool ion_may_hwrender_dmabuf(struct dma_buf *dmabuf);
+
+/**
+ * ion_may_hwrender_handle() - check if a handle set ION_FLAG_MAY_HWRENDER
+ * @client:	the client
+ * @handle:	the handle
+ *
+ * Given a handle, check if the buffer is allocated with ION_FLAG_MAY_HWRENDER.
+ * If the flags are set the function returns true. If it is unset, false.
+ * If the given handle is not valid, false is returned.
+ */
+bool ion_may_hwrender_handle(struct ion_client *client, struct ion_handle *handle);
+
+#include <linux/dma-direction.h>
+#include <linux/dma-buf.h>
+
+int ion_sync_partial_for_device(struct ion_client *client, int fd,
+					off_t offset, size_t len);
+dma_addr_t ion_iovmm_map(struct dma_buf_attachment *attachment,
+			 off_t offset, size_t size,
+			 enum dma_data_direction direction, int prop);
+void ion_iovmm_unmap(struct dma_buf_attachment *attachment, dma_addr_t iova);
+bool ion_is_heap_available(struct ion_heap *heap, unsigned long flags, void *data);
 
 #endif /* _LINUX_ION_H */

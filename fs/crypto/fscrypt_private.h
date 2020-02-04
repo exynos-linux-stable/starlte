@@ -15,9 +15,26 @@
 #include <linux/fscrypt.h>
 #include <crypto/hash.h>
 
+#if defined(CONFIG_FSCRYPT_SDP) || defined(CONFIG_DDAR)
+#include "fscrypt_knox_private.h"
+#endif
+
+#ifdef CONFIG_FSCRYPT_SDP
+#include "sdp/fscrypto_sdp_private.h"
+#include <sdp/fs_request.h>
+#endif
+
 /* Encryption parameters */
 #define FS_IV_SIZE			16
-#define FS_KEY_DERIVATION_NONCE_SIZE	16
+#define FS_AES_128_ECB_KEY_SIZE		16
+#define FS_AES_128_CBC_KEY_SIZE		16
+#define FS_AES_128_CTS_KEY_SIZE		16
+#define FS_AES_256_GCM_KEY_SIZE		32
+#define FS_AES_256_CBC_KEY_SIZE		32
+#define FS_AES_256_CTS_KEY_SIZE		32
+#define FS_AES_256_XTS_KEY_SIZE		64
+
+#define FS_KEY_DERIVATION_NONCE_SIZE		16
 
 /**
  * Encryption context for inode
@@ -37,6 +54,9 @@ struct fscrypt_context {
 	u8 flags;
 	u8 master_key_descriptor[FS_KEY_DESCRIPTOR_SIZE];
 	u8 nonce[FS_KEY_DERIVATION_NONCE_SIZE];
+#if defined(CONFIG_FSCRYPT_SDP) || defined(CONFIG_DDAR)
+	u32 knox_flags;
+#endif
 } __packed;
 
 #define FS_ENCRYPTION_CONTEXT_FORMAT_V1		1
@@ -61,6 +81,13 @@ struct fscrypt_info {
 	struct crypto_skcipher *ci_ctfm;
 	struct crypto_cipher *ci_essiv_tfm;
 	u8 ci_master_key[FS_KEY_DESCRIPTOR_SIZE];
+
+#ifdef CONFIG_DDAR
+	struct dd_info *ci_dd_info;
+#endif
+#ifdef CONFIG_FSCRYPT_SDP
+	struct sdp_info *ci_sdp_info;
+#endif
 };
 
 typedef enum {
@@ -86,6 +113,14 @@ static inline bool fscrypt_valid_enc_modes(u32 contents_mode,
 	    filenames_mode == FS_ENCRYPTION_MODE_SPECK128_256_CTS)
 		return true;
 
+	if (contents_mode == FS_PRIVATE_ENCRYPTION_MODE_AES_256_XTS &&
+	    filenames_mode == FS_ENCRYPTION_MODE_AES_256_CTS)
+		return true;
+
+	if (contents_mode == FS_PRIVATE_ENCRYPTION_MODE_AES_256_CBC &&
+	    filenames_mode == FS_ENCRYPTION_MODE_AES_256_CTS)
+		return true;
+
 	return false;
 }
 
@@ -100,15 +135,6 @@ extern int fscrypt_do_page_crypto(const struct inode *inode,
 				  gfp_t gfp_flags);
 extern struct page *fscrypt_alloc_bounce_page(struct fscrypt_ctx *ctx,
 					      gfp_t gfp_flags);
-extern const struct dentry_operations fscrypt_d_ops;
-
-extern void __printf(3, 4) __cold
-fscrypt_msg(struct super_block *sb, const char *level, const char *fmt, ...);
-
-#define fscrypt_warn(sb, fmt, ...)		\
-	fscrypt_msg(sb, KERN_WARNING, fmt, ##__VA_ARGS__)
-#define fscrypt_err(sb, fmt, ...)		\
-	fscrypt_msg(sb, KERN_ERR, fmt, ##__VA_ARGS__)
 
 /* fname.c */
 extern int fname_encrypt(struct inode *inode, const struct qstr *iname,

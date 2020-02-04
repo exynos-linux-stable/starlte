@@ -2,12 +2,16 @@
 #define __MM_CMA_H__
 
 struct cma {
+#ifdef CONFIG_RBIN
+	bool is_rbin;
+#endif
 	unsigned long   base_pfn;
 	unsigned long   count;
 	unsigned long   *bitmap;
 	unsigned int order_per_bit; /* Order of pages represented by one bit */
 	struct mutex    lock;
 #ifdef CONFIG_CMA_DEBUGFS
+	const char	*name;
 	struct hlist_head mem_head;
 	spinlock_t mem_head_lock;
 #endif

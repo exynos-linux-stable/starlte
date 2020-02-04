@@ -70,6 +70,7 @@ struct fence_cb;
  * been completed, or never called at all.
  */
 struct fence {
+	int magic_bit;
 	struct kref refcount;
 	const struct fence_ops *ops;
 	struct rcu_head rcu;
@@ -329,19 +330,6 @@ fence_is_signaled(struct fence *fence)
 }
 
 /**
- * __fence_is_later - return if f1 is chronologically later than f2
- * @f1:	[in]	the first fence's seqno
- * @f2:	[in]	the second fence's seqno from the same context
- *
- * Returns true if f1 is chronologically later than f2. Both fences must be
- * from the same context, since a seqno is not common across contexts.
- */
-static inline bool __fence_is_later(u32 f1, u32 f2)
-{
-	return (int)(f1 - f2) > 0;
-}
-
-/**
  * fence_is_later - return if f1 is chronologically later than f2
  * @f1:	[in]	the first fence from the same context
  * @f2:	[in]	the second fence from the same context
@@ -354,7 +342,7 @@ static inline bool fence_is_later(struct fence *f1, struct fence *f2)
 	if (WARN_ON(f1->context != f2->context))
 		return false;
 
-	return __fence_is_later(f1->seqno, f2->seqno);
+	return (int)(f1->seqno - f2->seqno) > 0;
 }
 
 /**

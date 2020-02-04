@@ -557,7 +557,7 @@ ext4_read_block_bitmap(struct super_block *sb, ext4_group_t block_group)
 static int ext4_has_free_clusters(struct ext4_sb_info *sbi,
 				  s64 nclusters, unsigned int flags)
 {
-	s64 free_clusters, dirty_clusters, rsv, resv_clusters;
+	s64 free_clusters, dirty_clusters, rsv, resv_clusters, sec_rsv;
 	struct percpu_counter *fcc = &sbi->s_freeclusters_counter;
 	struct percpu_counter *dcc = &sbi->s_dirtyclusters_counter;
 
@@ -571,8 +571,10 @@ static int ext4_has_free_clusters(struct ext4_sb_info *sbi,
 	 */
 	rsv = (ext4_r_blocks_count(sbi->s_es) >> sbi->s_cluster_bits) +
 	      resv_clusters;
+	sec_rsv = (ext4_sec_r_blocks_count(sbi->s_es) >> sbi->s_cluster_bits) +
+		rsv;
 
-	if (free_clusters - (nclusters + rsv + dirty_clusters) <
+	if (free_clusters - (nclusters + sec_rsv + dirty_clusters) <
 					EXT4_FREECLUSTERS_WATERMARK) {
 		free_clusters  = percpu_counter_sum_positive(fcc);
 		dirty_clusters = percpu_counter_sum_positive(dcc);
@@ -580,13 +582,18 @@ static int ext4_has_free_clusters(struct ext4_sb_info *sbi,
 	/* Check whether we have space after accounting for current
 	 * dirty clusters & root reserved clusters.
 	 */
-	if (free_clusters >= (rsv + nclusters + dirty_clusters))
+	if (free_clusters >= (sec_rsv + nclusters + dirty_clusters))
 		return 1;
+
+	if (ext4_android_claim_sec_r_blocks(flags)) {
+		if (free_clusters >= (rsv + nclusters + dirty_clusters))
+			return 1;
+	}
 
 	/* Hm, nope.  Are (enough) root reserved clusters available? */
 	if (uid_eq(sbi->s_resuid, current_fsuid()) ||
 	    (!gid_eq(sbi->s_resgid, GLOBAL_ROOT_GID) && in_group_p(sbi->s_resgid)) ||
-	    capable(CAP_SYS_RESOURCE) ||
+	    capable(CAP_SYS_RESOURCE) || ext4_android_claim_r_blocks(sbi) ||
 	    (flags & EXT4_MB_USE_ROOT_BLOCKS)) {
 
 		if (free_clusters >= (nclusters + dirty_clusters +

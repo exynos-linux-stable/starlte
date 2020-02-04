@@ -144,6 +144,139 @@ err:
 	return ret;
 }
 
+static int ion_handle_test_phys(struct ion_test_data *test_data,
+				u32 cmd, u32 arg, u32 *result)
+{
+	struct dma_buf_attachment *att;
+	struct sg_table *sgt;
+	struct scatterlist *sg;
+	int ret = 0;
+	int i;
+
+	if (!test_data->dma_buf) {
+		pr_err("%s: no dmabuf is attached\n", __func__);
+		return -EINVAL;
+	}
+
+	att = dma_buf_attach(test_data->dma_buf, test_data->dev);
+	if (IS_ERR(att)) {
+		pr_err("%s: Failed to attach dmabuf\n", __func__);
+		return PTR_ERR(att);
+	}
+
+	sgt = dma_buf_map_attachment(att, DMA_TO_DEVICE);
+	if (IS_ERR(sgt)) {
+		pr_err("%s: Failed to map to attachment\n", __func__);
+		ret = PTR_ERR(sgt);
+		goto err_map;
+	}
+
+	switch (cmd) {
+	case PHYS_CHUNK_IS_IDENTICAL_SIZE:
+	{
+		size_t len = sgt->sgl->length;
+
+		for_each_sg(sgt->sgl, sg, sgt->orig_nents, i) {
+			if (len != sg->length) {
+				pr_err(
+				"%s: expected size %zu but found %u at %d\n",
+				__func__, len, sg->length, i);
+				ret = -EINVAL;
+				break;
+			}
+		}
+		break;
+	}
+	case PHYS_IS_ORDERED_IN_ADDRESS:
+	{
+		phys_addr_t addr = 0;
+
+		for_each_sg(sgt->sgl, sg, sgt->orig_nents, i) {
+			if (addr >= sg_phys(sg)) {
+				pr_err("%s: pages are not in address order\n",
+				       __func__);
+				ret = -EINVAL;
+				break;
+			}
+			addr = sg_phys(sg);
+		}
+		break;
+	}
+	case PHYS_IS_RESERVED:
+	{
+		if (sgt->orig_nents != 1) {
+			pr_err("%s: buffer should be physically contiguous\n",
+			       __func__);
+			ret = -EINVAL;
+			break;
+		}
+
+		if (!PageReserved(sg_page(sgt->sgl))) {
+			pr_err("%s: page of the buffer is not reserved\n",
+			       __func__);
+			ret = -EINVAL;
+			break;
+		}
+
+		break;
+	}
+	case PHYS_IS_CMA:
+	{
+		if (sgt->orig_nents != 1) {
+			pr_err("%s: buffer should be physically contiguous\n",
+			       __func__);
+			ret = -EINVAL;
+			break;
+		}
+
+		if (!is_migrate_cma_page(sg_page(sgt->sgl))) {
+			pr_err("%s: page of the buffer is not cma page\n",
+			       __func__);
+			ret = -EINVAL;
+			break;
+		}
+
+		break;
+	}
+	case PHYS_IS_ALIGNED:
+	{
+		if (sgt->orig_nents != 1) {
+			pr_err("%s: buffer should be physically contiguous\n",
+			       __func__);
+			ret = -EINVAL;
+			break;
+		}
+
+		if ((arg & ~arg) != 0) {
+			pr_err(
+			"%s: arg %u of PHYS_IS_ALIGNED is not power of 2\n",
+			__func__, arg);
+			ret = -EINVAL;
+			break;
+		}
+
+		if (!IS_ALIGNED(sg_phys(sgt->sgl), arg)) {
+			pr_err("%s: buffer is not aligned by %u\n",
+			       __func__, arg);
+			ret = -EINVAL;
+			break;
+		}
+		break;
+	}
+	default:
+		pr_err("%s: unknown command %u to ION_IOC_TEST_PHYS\n",
+		       __func__, cmd);
+		ret = -EINVAL;
+		break;
+	}
+
+	dma_buf_unmap_attachment(att, sgt, DMA_TO_DEVICE);
+err_map:
+	dma_buf_detach(test_data->dma_buf, att);
+
+	return ret;
+}
+
 static long ion_test_ioctl(struct file *filp, unsigned int cmd,
 			   unsigned long arg)
 {
@@ -152,6 +285,7 @@ static long ion_test_ioctl(struct file *filp, unsigned int cmd,
 
 	union {
 		struct ion_test_rw_data test_rw;
+		struct ion_test_phys_data phys;
 	} data;
 
 	if (_IOC_SIZE(cmd) > sizeof(data))
@@ -195,12 +329,20 @@ static long ion_test_ioctl(struct file *filp, unsigned int cmd,
 					     data.test_rw.write);
 		break;
 	}
+	case ION_IOC_TEST_PHYS:
+	{
+		ret = ion_handle_test_phys(test_data,
+					   data.phys.cmd,
+					   data.phys.arg,
+					   &data.phys.result);
+		break;
+	}
 	default:
 		return -ENOTTY;
 	}
 
 	if (_IOC_DIR(cmd) & _IOC_READ) {
-		if (copy_to_user((void __user *)arg, &data, sizeof(data)))
+		if (copy_to_user((void __user *)arg, &data, _IOC_SIZE(cmd)))
 			return -EFAULT;
 	}
 	return ret;

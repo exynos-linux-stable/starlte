@@ -94,4 +94,16 @@ struct sync_file_info {
  */
 #define SYNC_IOC_FILE_INFO	_IOWR(SYNC_IOC_MAGIC, 4, struct sync_file_info)
 
+/**
+ * DOC: FENCE_NAME properties - to set name for duplicate fences
+ */
+#define HWC_FENCE_NAME_LEN  (5)
+#define HWC_FENCE_NAME_START    (32 - HWC_FENCE_NAME_LEN)
+
+/**
+ * DOC: SYNC_IOC_FENCE_NAME - set sync name for duplicate case on platform
+ *
+ */
+#define SYNC_IOC_FENCE_NAME    _IOWR(SYNC_IOC_MAGIC, 10, char[32])
+
 #endif /* _UAPI_LINUX_SYNC_H */

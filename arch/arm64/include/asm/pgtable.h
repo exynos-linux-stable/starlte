@@ -23,6 +23,13 @@
 #include <asm/pgtable-hwdef.h>
 #include <asm/pgtable-prot.h>
 
+#ifdef CONFIG_UH
+#include <linux/uh.h>
+#ifdef CONFIG_UH_RKP
+#include <linux/rkp.h>
+#endif
+#endif
+
 /*
  * VMALLOC range.
  *
@@ -51,7 +58,11 @@ extern void __pgd_error(const char *file, int line, unsigned long val);
  * ZERO_PAGE is a global shared page that is always zero: used
  * for zero-mapped memory areas etc..
  */
+#ifdef CONFIG_UH_RKP
+extern unsigned long *empty_zero_page;
+#else
 extern unsigned long empty_zero_page[PAGE_SIZE / sizeof(unsigned long)];
+#endif
 #define ZERO_PAGE(vaddr)	phys_to_page(__pa_symbol(empty_zero_page))
 
 #define pte_ERROR(pte)		__pte_error(__FILE__, __LINE__, pte_val(pte))
@@ -187,10 +198,36 @@ static inline pmd_t pmd_mkcont(pmd_t pmd)
 	return __pmd(pmd_val(pmd) | PMD_SECT_CONT);
 }
 
+#ifdef CONFIG_TIMA_LKMAUTH
+#ifdef CONFIG_TIMA_LKMAUTH_CODE_PROT
+static inline pte_t pte_mknexec(pte_t pte)
+{
+	pte_val(pte) |= PTE_PXN;
+	return pte;
+}
+#endif
+#endif
+
 static inline void set_pte(pte_t *ptep, pte_t pte)
 {
+#ifdef CONFIG_UH_RKP
+	/* bug on double mapping */
+	BUG_ON(pte_val(pte) && rkp_is_pg_dbl_mapped(pte_val(pte)));
+
+	if (rkp_is_pg_protected((u64)ptep)) {
+		uh_call(UH_APP_RKP, RKP_WRITE_PGT3, (u64)ptep, pte_val(pte), 0, 0);
+	} else {
+		asm volatile("mov x1, %0\n"
+					"mov x2, %1\n"
+					"str x2, [x1]\n"
+		:
+		: "r" (ptep), "r" (pte)
+		: "x1", "x2", "memory");
+	}
+#else
 	*ptep = pte;
 
+#endif
 	/*
 	 * Only if the new pte is valid and kernel, otherwise TLB maintenance
 	 * or update_mmu_cache() have the necessary barriers.
@@ -398,9 +435,24 @@ extern pgprot_t phys_mem_access_prot(struct file *file, unsigned long pfn,
 
 static inline void set_pmd(pmd_t *pmdp, pmd_t pmd)
 {
+#ifdef CONFIG_UH_RKP
+	if (rkp_is_pg_protected((u64)pmdp)) {
+		uh_call(UH_APP_RKP, RKP_WRITE_PGT2, (u64)pmdp, pmd_val(pmd), 0, 0);
+	} else {
+		asm volatile("mov x1, %0\n"
+					"mov x2, %1\n"
+					"str x2, [x1]\n"
+		:
+		: "r" (pmdp), "r" (pmd)
+		: "x1", "x2", "memory");
+		dsb(ishst);
+		isb();
+	}
+#else
 	*pmdp = pmd;
 	dsb(ishst);
 	isb();
+#endif
 }
 
 static inline void pmd_clear(pmd_t *pmdp)
@@ -449,9 +501,24 @@ static inline phys_addr_t pmd_page_paddr(pmd_t pmd)
 
 static inline void set_pud(pud_t *pudp, pud_t pud)
 {
+#ifdef CONFIG_UH_RKP
+	if (rkp_is_pg_protected((u64)pudp)) {
+		uh_call(UH_APP_RKP, RKP_WRITE_PGT1, (u64)pudp, pud_val(pud), 0, 0);
+	} else {
+		asm volatile("mov x1, %0\n"
+					"mov x2, %1\n"
+					"str x2, [x1]\n"
+		:
+		: "r" (pudp), "r" (pud)
+		: "x1", "x2", "memory");
+		dsb(ishst);
+		isb();
+	}
+#else
 	*pudp = pud;
 	dsb(ishst);
 	isb();
+#endif
 }
 
 static inline void pud_clear(pud_t *pudp)

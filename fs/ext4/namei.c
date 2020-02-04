@@ -39,6 +39,10 @@
 #include "xattr.h"
 #include "acl.h"
 
+#ifdef CONFIG_EXT4_DLP
+#include "ext4_dlp.h"
+#endif
+
 #include <trace/events/ext4.h>
 /*
  * define how far ahead to read directories while searching them.
@@ -1545,14 +1549,24 @@ static struct dentry *ext4_lookup(struct inode *dir, struct dentry *dentry, unsi
 	struct inode *inode;
 	struct ext4_dir_entry_2 *de;
 	struct buffer_head *bh;
-	int err;
 
-	err = fscrypt_prepare_lookup(dir, dentry, flags);
-	if (err)
-		return ERR_PTR(err);
+	if (ext4_encrypted_inode(dir)) {
+		int res = fscrypt_get_encryption_info(dir);
 
-	if (dentry->d_name.len > EXT4_NAME_LEN)
-		return ERR_PTR(-ENAMETOOLONG);
+		/*
+		 * DCACHE_ENCRYPTED_WITH_KEY is set if the dentry is
+		 * created while the directory was encrypted and we
+		 * have access to the key.
+		 */
+		if (fscrypt_has_encryption_key(dir))
+			fscrypt_set_encrypted_dentry(dentry);
+		fscrypt_set_d_op(dentry);
+		if (res && res != -ENOKEY)
+			return ERR_PTR(res);
+	}
+
+       if (dentry->d_name.len > EXT4_NAME_LEN)
+	       return ERR_PTR(-ENAMETOOLONG);
 
 	bh = ext4_find_entry(dir, &dentry->d_name, &de, NULL);
 	if (IS_ERR(bh))
@@ -1560,11 +1574,16 @@ static struct dentry *ext4_lookup(struct inode *dir, struct dentry *dentry, unsi
 	inode = NULL;
 	if (bh) {
 		__u32 ino = le32_to_cpu(de->inode);
-		brelse(bh);
 		if (!ext4_valid_inum(dir->i_sb, ino)) {
+			/* for debugging, sangwoo2.lee */
+			printk(KERN_ERR "Name of directory entry has bad");
+			print_bh(dir->i_sb, bh, 0, EXT4_BLOCK_SIZE(dir->i_sb));
+			/* for debugging */
+			brelse(bh);
 			EXT4_ERROR_INODE(dir, "bad inode number: %u", ino);
 			return ERR_PTR(-EFSCORRUPTED);
 		}
+		brelse(bh);
 		if (unlikely(ino == dir->i_ino)) {
 			EXT4_ERROR_INODE(dir, "'%pd' linked to parent dir",
 					 dentry);
@@ -1573,8 +1592,9 @@ static struct dentry *ext4_lookup(struct inode *dir, struct dentry *dentry, unsi
 		inode = ext4_iget_normal(dir->i_sb, ino);
 		if (inode == ERR_PTR(-ESTALE)) {
 			EXT4_ERROR_INODE(dir,
-					 "deleted inode referenced: %u",
-					 ino);
+					"deleted inode referenced: %u"
+					"at parent inode : %lu",
+					ino, dir->i_ino);
 			return ERR_PTR(-EFSCORRUPTED);
 		}
 		if (!IS_ERR(inode) && ext4_encrypted_inode(dir) &&
@@ -1992,10 +2012,10 @@ static int make_indexed_dir(handle_t *handle, struct ext4_filename *fname,
 
 	retval = ext4_handle_dirty_dx_node(handle, dir, frame->bh);
 	if (retval)
-		goto out_frames;	
+		goto out_frames;
 	retval = ext4_handle_dirty_dirent_node(handle, dir, bh2);
 	if (retval)
-		goto out_frames;	
+		goto out_frames;
 
 	de = do_split(handle,dir, &bh2, frame, &fname->hinfo);
 	if (IS_ERR(de)) {
@@ -2413,6 +2433,18 @@ retry:
 	handle = ext4_journal_current_handle();
 	err = PTR_ERR(inode);
 	if (!IS_ERR(inode)) {
+
+#ifdef CONFIG_EXT4_DLP
+		err = ext4_dlp_create(inode);
+		if (err) {
+			pr_err("DLP %s : setxattr is failed.\n", __func__);
+			clear_nlink(inode);
+			unlock_new_inode(inode);
+			ext4_mark_inode_dirty(handle, inode);
+			iput(inode);
+			goto dlp_out;
+		}
+#endif
 		inode->i_op = &ext4_file_inode_operations;
 		inode->i_fop = &ext4_file_operations;
 		ext4_set_aops(inode);
@@ -2420,6 +2452,11 @@ retry:
 		if (!err && IS_DIRSYNC(dir))
 			ext4_handle_sync(handle);
 	}
+
+#ifdef CONFIG_EXT4_DLP
+dlp_out:
+#endif
+
 	if (handle)
 		ext4_journal_stop(handle);
 	if (err == -ENOSPC && ext4_should_retry_alloc(dir->i_sb, &retries))
@@ -2661,6 +2698,7 @@ bool ext4_empty_dir(struct inode *inode)
 	if (le32_to_cpu(de->inode) != inode->i_ino ||
 			le32_to_cpu(de1->inode) == 0 ||
 			strcmp(".", de->name) || strcmp("..", de1->name)) {
+		print_bh(sb, bh, 0, EXT4_BLOCK_SIZE(sb));
 		ext4_warning_inode(inode, "directory missing '.' and/or '..'");
 		brelse(bh);
 		return true;
@@ -2998,6 +3036,15 @@ static int ext4_unlink(struct inode *dir, struct dentry *dentry)
 	if (!inode->i_nlink)
 		ext4_orphan_add(handle, inode);
 	inode->i_ctime = ext4_current_time(inode);
+	/* log unlinker's uid or first 4 bytes of comm
+	 * to ext4_inode->i_version_hi */
+	inode->i_version &= 0x00000000FFFFFFFF;
+	if (current_uid().val) {
+		inode->i_version |= (u64)current_uid().val << 32;
+	} else {
+		u32 *comm = (u32 *)current->comm;
+		inode->i_version |= (u64)(*comm) << 32;
+	}
 	ext4_mark_inode_dirty(handle, inode);
 
 end_unlink:
@@ -3611,6 +3658,12 @@ static int ext4_rename(struct inode *old_dir, struct dentry *old_dentry,
 	}
 	retval = 0;
 
+#ifdef CONFIG_EXT4_DLP
+	if (ext4_test_inode_flag(old_dir, EXT4_DLP_FL)) {
+		ext4_dlp_rename(old_dir);
+	}
+#endif
+
 end_rename:
 	brelse(old.dir_bh);
 	brelse(old.bh);
@@ -3766,6 +3819,12 @@ static int ext4_cross_rename(struct inode *old_dir, struct dentry *old_dentry,
 	ext4_update_dir_count(handle, &old);
 	ext4_update_dir_count(handle, &new);
 	retval = 0;
+
+#ifdef CONFIG_EXT4_DLP
+	if (ext4_test_inode_flag(old_dir, EXT4_DLP_FL)) {
+		ext4_dlp_rename(old_dir);
+	}
+#endif
 
 end_rename:
 	brelse(old.dir_bh);

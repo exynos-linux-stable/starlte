@@ -131,6 +131,7 @@ static inline void __unregister_cpu_notifier(struct notifier_block *nb)
 }
 #endif
 
+int cpus_up(const struct cpumask *enable_cpus);
 int cpu_up(unsigned int cpu);
 void notify_cpu_starting(unsigned int cpu);
 extern void cpu_maps_update_begin(void);
@@ -198,6 +199,7 @@ extern void cpu_hotplug_enable(void);
 #define unregister_hotcpu_notifier(nb)	unregister_cpu_notifier(nb)
 #define __unregister_hotcpu_notifier(nb)	__unregister_cpu_notifier(nb)
 void clear_tasks_mm_cpumask(int cpu);
+int cpus_down(const struct cpumask *disable_cpus);
 int cpu_down(unsigned int cpu);
 
 #else		/* CONFIG_HOTPLUG_CPU */

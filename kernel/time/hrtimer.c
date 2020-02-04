@@ -49,6 +49,7 @@
 #include <linux/sched/deadline.h>
 #include <linux/timer.h>
 #include <linux/freezer.h>
+#include <linux/exynos-ss.h>
 
 #include <asm/uaccess.h>
 
@@ -193,6 +194,11 @@ struct hrtimer_cpu_base *get_target_base(struct hrtimer_cpu_base *base,
 }
 #endif
 
+#ifdef CONFIG_SCHED_HMP
+extern struct cpumask hmp_fast_cpu_mask;
+extern struct cpumask hmp_slow_cpu_mask;
+#endif
+
 /*
  * We switch the timer base to a power-optimized selected CPU target,
  * if:
@@ -212,9 +218,49 @@ switch_hrtimer_base(struct hrtimer *timer, struct hrtimer_clock_base *base,
 	struct hrtimer_cpu_base *new_cpu_base, *this_cpu_base;
 	struct hrtimer_clock_base *new_base;
 	int basenum = base->index;
+#ifdef CONFIG_SCHED_HMP
+	int this_cpu = smp_processor_id();
+	int cpu = get_nohz_timer_target();
+#endif
 
 	this_cpu_base = this_cpu_ptr(&hrtimer_bases);
 	new_cpu_base = get_target_base(this_cpu_base, pinned);
+#ifdef CONFIG_SCHED_HMP
+	/* Switch the timer base to boot cluster on HMP */
+	if (timer->bounded_to_boot_cluster &&
+			cpumask_test_cpu(this_cpu, &hmp_fast_cpu_mask) &&
+			!pinned && this_cpu_base->migration_enabled) {
+		int bound_cpu = 0;
+
+		if (unlikely(hrtimer_callback_running(timer)))
+			return base;
+
+		/* Use the nearest busy cpu to switch timer base
+		 * from an idle cpu. */
+		for_each_cpu(cpu, &hmp_slow_cpu_mask) {
+			if (!idle_cpu(cpu) && is_housekeeping_cpu(cpu)) {
+				bound_cpu = cpu;
+				break;
+			}
+		}
+
+		new_cpu_base = &per_cpu(hrtimer_bases, bound_cpu);
+		new_base = &new_cpu_base->clock_base[basenum];
+
+		/* See the comment in lock_timer_base() */
+		timer->base = NULL;
+		raw_spin_unlock(&base->cpu_base->lock);
+		raw_spin_lock(&new_base->cpu_base->lock);
+
+		base = timer->base = new_base;
+
+		raw_spin_unlock(&new_base->cpu_base->lock);
+		raw_spin_lock(&base->cpu_base->lock);
+
+		return new_base;
+	}
+#endif
+
 again:
 	new_base = &new_cpu_base->clock_base[basenum];
 
@@ -1252,7 +1298,9 @@ static void __run_hrtimer(struct hrtimer_cpu_base *cpu_base,
 	 */
 	raw_spin_unlock(&cpu_base->lock);
 	trace_hrtimer_expire_entry(timer, now);
+	exynos_ss_hrtimer(timer, &now->tv64, fn, ESS_FLAG_IN);
 	restart = fn(timer);
+	exynos_ss_hrtimer(timer, &now->tv64, fn, ESS_FLAG_OUT);
 	trace_hrtimer_expire_exit(timer);
 	raw_spin_lock(&cpu_base->lock);
 
@@ -1620,6 +1668,9 @@ int hrtimers_prepare_cpu(unsigned int cpu)
 	cpu_base->active_bases = 0;
 	cpu_base->cpu = cpu;
 	hrtimer_init_hres(cpu_base);
+
+	restore_pcpu_tick(cpu);
+
 	return 0;
 }
 
@@ -1661,6 +1712,7 @@ int hrtimers_dead_cpu(unsigned int scpu)
 	int i;
 
 	BUG_ON(cpu_online(scpu));
+	save_pcpu_tick(scpu);
 	tick_cancel_sched_timer(scpu);
 
 	local_irq_disable();

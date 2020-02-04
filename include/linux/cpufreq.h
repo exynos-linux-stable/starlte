@@ -120,14 +120,6 @@ struct cpufreq_policy {
 	bool			fast_switch_possible;
 	bool			fast_switch_enabled;
 
-	/*
-	 * Preferred average time interval between consecutive invocations of
-	 * the driver to set the frequency for this policy.  To be set by the
-	 * scaling driver (0, which is the default, means no preference).
-	 */
-	unsigned int		up_transition_delay_us;
-	unsigned int		down_transition_delay_us;
-
 	 /* Cached frequency lookup from cpufreq_driver_resolve_freq. */
 	unsigned int cached_target_freq;
 	int cached_resolved_idx;
@@ -169,7 +161,7 @@ static inline void cpufreq_cpu_put(struct cpufreq_policy *policy) { }
 
 static inline bool policy_is_shared(struct cpufreq_policy *policy)
 {
-	return cpumask_weight(policy->cpus) > 1;
+	return cpumask_weight(policy->related_cpus) > 1;
 }
 
 /* /sys/devices/system/cpu/cpufreq: entry point for global variables */
@@ -501,7 +493,8 @@ static inline unsigned long cpufreq_scale(unsigned long old, u_int div,
  * the ondemand governor will not work. All times here are in us (microseconds).
  */
 #define MIN_SAMPLING_RATE_RATIO		(2)
-#define LATENCY_MULTIPLIER		(1000)
+#define UP_LATENCY_MULTIPLIER		(50)
+#define DOWN_LATENCY_MULTIPLIER		(100)
 #define MIN_LATENCY_MULTIPLIER		(20)
 #define TRANSITION_LATENCY_LIMIT	(10 * 1000 * 1000)
 
@@ -597,6 +590,11 @@ extern struct cpufreq_governor cpufreq_gov_sched;
 #define CPUFREQ_DEFAULT_GOVERNOR	(&cpufreq_gov_sched)
 #endif
 
+#if defined (CONFIG_CPU_FREQ_GOV_SCHEDUTIL)
+int sugov_fast_start(struct cpufreq_policy *policy, unsigned int cpu);
+#else
+static inline int sugov_fast_start(struct cpufreq_policy *policy, unsigned int cpu) { return 0; }
+#endif
 /*********************************************************************
  *                     FREQUENCY TABLE HELPERS                       *
  *********************************************************************/
@@ -932,6 +930,5 @@ int cpufreq_generic_init(struct cpufreq_policy *policy,
 
 struct sched_domain;
 unsigned long cpufreq_scale_freq_capacity(struct sched_domain *sd, int cpu);
-unsigned long cpufreq_scale_max_freq_capacity(struct sched_domain *sd, int cpu);
-unsigned long cpufreq_scale_min_freq_capacity(struct sched_domain *sd, int cpu);
+unsigned long cpufreq_scale_max_freq_capacity(int cpu);
 #endif /* _LINUX_CPUFREQ_H */

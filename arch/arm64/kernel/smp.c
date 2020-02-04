@@ -37,6 +37,10 @@
 #include <linux/completion.h>
 #include <linux/of.h>
 #include <linux/irq_work.h>
+#include <linux/exynos-ss.h>
+#ifdef CONFIG_SEC_DEBUG_EXTRA_INFO
+#include <linux/sec_debug.h>
+#endif
 
 #include <asm/alternative.h>
 #include <asm/atomic.h>
@@ -54,6 +58,8 @@
 #include <asm/tlbflush.h>
 #include <asm/ptrace.h>
 #include <asm/virt.h>
+#include <soc/samsung/exynos-sdm.h>
+#include <soc/samsung/exynos-cpu_hotplug.h>
 
 #define CREATE_TRACE_POINTS
 #include <trace/events/ipi.h>
@@ -132,8 +138,10 @@ static inline int op_cpu_kill(unsigned int cpu)
  */
 static int boot_secondary(unsigned int cpu, struct task_struct *idle)
 {
-	if (cpu_ops[cpu]->cpu_boot)
+	if (cpu_ops[cpu]->cpu_boot) {
+		exynos_hpgov_validate_hpin(cpu);
 		return cpu_ops[cpu]->cpu_boot(cpu);
+	}
 
 	return -EOPNOTSUPP;
 }
@@ -814,14 +822,31 @@ void arch_irq_work_raise(void)
 }
 #endif
 
+static DEFINE_RAW_SPINLOCK(stop_lock);
+
 /*
  * ipi_cpu_stop - handle IPI from smp_send_stop()
  */
-static void ipi_cpu_stop(unsigned int cpu)
+static void ipi_cpu_stop(unsigned int cpu, struct pt_regs *regs)
 {
+	if (system_state == SYSTEM_BOOTING ||
+	    system_state == SYSTEM_RUNNING) {
+		raw_spin_lock(&stop_lock);
+		pr_crit("CPU%u: stopping\n", cpu);
+		dump_stack();
+		raw_spin_unlock(&stop_lock);
+	}
+
 	set_cpu_online(cpu, false);
 
 	local_irq_disable();
+
+	exynos_ss_save_context(regs);
+#ifdef CONFIG_SEC_DEBUG_EXTRA_INFO
+	if (!user_mode(regs))
+		sec_debug_set_extra_info_backtrace_cpu(regs, cpu);
+#endif
+	exynos_sdm_flush_secdram();
 
 	while (1)
 		cpu_relax();
@@ -840,6 +865,8 @@ void handle_IPI(int ipinr, struct pt_regs *regs)
 		__inc_irq_stat(cpu, ipi_irqs[ipinr]);
 	}
 
+	exynos_ss_irq(ipinr, handle_IPI, irqs_disabled(), ESS_FLAG_IN);
+
 	switch (ipinr) {
 	case IPI_RESCHEDULE:
 		scheduler_ipi();
@@ -853,7 +880,7 @@ void handle_IPI(int ipinr, struct pt_regs *regs)
 
 	case IPI_CPU_STOP:
 		irq_enter();
-		ipi_cpu_stop(cpu);
+		ipi_cpu_stop(cpu, regs);
 		irq_exit();
 		break;
 
@@ -888,6 +915,9 @@ void handle_IPI(int ipinr, struct pt_regs *regs)
 
 	if ((unsigned)ipinr < NR_IPI)
 		trace_ipi_exit_rcuidle(ipi_types[ipinr]);
+
+	exynos_ss_irq(ipinr, handle_IPI, irqs_disabled(), ESS_FLAG_OUT);
+
 	set_irq_regs(old_regs);
 }
 
@@ -920,7 +950,7 @@ void smp_send_stop(void)
 	}
 
 	/* Wait up to one second for other CPUs to stop */
-	timeout = USEC_PER_SEC;
+	timeout = USEC_PER_SEC * 5;
 	while (num_online_cpus() > 1 && timeout--)
 		udelay(1);
 

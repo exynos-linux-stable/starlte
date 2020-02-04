@@ -774,6 +774,13 @@ config UID_SYS_STATS
 	  Per UID based io statistics exported to /proc/uid_io
 	  Per UID based procstat control in /proc/uid_procstat
 
+config DEBUG_UID_CPUTIME
+	bool "Record each uid cputime"
+	depends on UID_SYS_STATS
+	default n
+	help
+	  Record each uid cputime for debugging
+
 config UID_SYS_STATS_DEBUG
 	bool "Per-TASK statistics"
 	depends on UID_SYS_STATS
@@ -787,6 +794,19 @@ config MEMORY_STATE_TIME
 	help
 	  Memory time statistics exported to /sys/kernel/memory_state_time
 
+config TIMA_LOG
+	tristate "Support for dumping TIMA log"
+	depends on TIMA
+	default y
+	help
+	  This option enables support for dumping TIMA log.
+
+config KNOX_KAP
+	bool "Enable KNOX KAP mode"
+	default n
+	help
+	  Knox Active Protection mode
+
 source "drivers/misc/c2port/Kconfig"
 source "drivers/misc/eeprom/Kconfig"
 source "drivers/misc/cb710/Kconfig"
@@ -799,4 +819,8 @@ source "drivers/misc/mic/Kconfig"
 source "drivers/misc/genwqe/Kconfig"
 source "drivers/misc/echo/Kconfig"
 source "drivers/misc/cxl/Kconfig"
+source "drivers/misc/mcu_ipc/Kconfig"
+source "drivers/misc/modem_v1/Kconfig"
+source "drivers/misc/modem_if/Kconfig"
+source "drivers/misc/dev_ril_bridge/Kconfig"
 endmenu

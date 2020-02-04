@@ -113,11 +113,20 @@ int fscrypt_zeroout_range(const struct inode *inode, pgoff_t lblk,
 	}
 
 	while (len--) {
+#ifdef CONFIG_FS_PRIVATE_ENCRYPTION
+		if (!inode->i_mapping->fmp_ci.private_algo_mode) {
+#endif /* CONFIG FS_PRIVATE_ENCRYPTION */
 		err = fscrypt_do_page_crypto(inode, FS_ENCRYPT, lblk,
 					     ZERO_PAGE(0), ciphertext_page,
 					     PAGE_SIZE, 0, GFP_NOFS);
 		if (err)
 			goto errout;
+#ifdef CONFIG_FS_PRIVATE_ENCRYPTION
+		} else {
+			memset(page_address(ciphertext_page), 0, PAGE_SIZE);
+			ciphertext_page->mapping = inode->i_mapping;
+		}
+#endif /* CONFIG FS_PRIVATE_ENCRYPTION */
 
 		bio = bio_alloc(GFP_NOWAIT, 1);
 		if (!bio) {
@@ -148,6 +157,10 @@ int fscrypt_zeroout_range(const struct inode *inode, pgoff_t lblk,
 	}
 	err = 0;
 errout:
+#ifdef CONFIG_FS_PRIVATE_ENCRYPTION
+	if (inode->i_mapping->fmp_ci.private_algo_mode)
+		ciphertext_page->mapping = NULL;
+#endif /* CONFIG FS_PRIVATE_ENCRYPTION */
 	fscrypt_release_ctx(ctx);
 	return err;
 }

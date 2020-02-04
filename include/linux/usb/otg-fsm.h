@@ -26,8 +26,8 @@
 #ifdef VERBOSE
 #define VDBG(fmt, args...) pr_debug("[%s]  " fmt , \
 				 __func__, ## args)
-#else
-#define VDBG(stuff...)	do {} while (0)
+//#else
+//#define VDBG(stuff...)	do {} while (0)
 #endif
 
 #ifdef VERBOSE
@@ -149,6 +149,8 @@ enum otg_fsm_timer {
  *		to a_wait_vfall
  */
 struct otg_fsm {
+	int reset;
+
 	/* Input */
 	int id;
 	int adp_change;

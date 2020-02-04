@@ -38,6 +38,17 @@ int unregister_pm_notifier(struct notifier_block *nb)
 }
 EXPORT_SYMBOL_GPL(unregister_pm_notifier);
 
+bool is_pm_chain_notifier(struct notifier_block **notifier_block,
+		unsigned long val)
+{
+	if ((&pm_chain_head.head == notifier_block) &&
+			((val == PM_SUSPEND_PREPARE) || (val == PM_POST_SUSPEND)))
+		return true;
+
+	return false;
+}
+EXPORT_SYMBOL_GPL(is_pm_chain_notifier);
+
 int __pm_notifier_call_chain(unsigned long val, int nr_to_call, int *nr_calls)
 {
 	int ret;
@@ -593,6 +604,35 @@ power_attr(pm_freeze_timeout);
 
 #endif	/* CONFIG_FREEZER*/
 
+#ifdef CONFIG_FOTA_LIMIT
+static char fota_limit_str[] =
+#ifdef CONFIG_ARCH_EXYNOS9
+	"[START]\n"
+	"/sys/power/cpufreq_max_limit 1469000\n"
+	"[STOP]\n"
+	"/sys/power/cpufreq_max_limit -1\n"
+	"[END]\n";
+#else
+	"[NOT_SUPPORT]\n";
+#endif
+
+static ssize_t fota_limit_show(struct kobject *kobj,
+					struct kobj_attribute *attr,
+					char *buf)
+{
+	pr_info("%s\n", __func__);
+	return sprintf(buf, "%s", fota_limit_str);
+}
+
+static struct kobj_attribute fota_limit_attr = {
+	.attr	= {
+		.name = __stringify(fota_limit),
+		.mode = 0440,
+	},
+	.show	= fota_limit_show,
+};
+#endif /* CONFIG_FOTA_LIMIT */
+
 static struct attribute * g[] = {
 	&state_attr.attr,
 #ifdef CONFIG_PM_TRACE
@@ -619,6 +659,9 @@ static struct attribute * g[] = {
 #endif
 #ifdef CONFIG_FREEZER
 	&pm_freeze_timeout_attr.attr,
+#endif
+#ifdef CONFIG_FOTA_LIMIT
+	&fota_limit_attr.attr,
 #endif
 	NULL,
 };

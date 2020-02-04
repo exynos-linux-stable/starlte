@@ -70,6 +70,22 @@ obj-$(CONFIG_MFD_WM8350_I2C)	+= wm8350-i2c.o
 wm8994-objs			:= wm8994-core.o wm8994-irq.o wm8994-regmap.o
 obj-$(CONFIG_MFD_WM8994)	+= wm8994.o
 
+obj-$(CONFIG_MFD_MADERA)	+= madera-core.o
+ifeq ($(CONFIG_MFD_CS47L35),y)
+obj-$(CONFIG_MFD_MADERA)	+= cs47l35-tables.o
+endif
+ifeq ($(CONFIG_MFD_CS47L85),y)
+obj-$(CONFIG_MFD_MADERA)	+= cs47l85-tables.o
+endif
+ifeq ($(CONFIG_MFD_CS47L90),y)
+obj-$(CONFIG_MFD_MADERA)	+= cs47l90-tables.o
+endif
+ifeq ($(CONFIG_MFD_CS47L92),y)
+obj-$(CONFIG_MFD_MADERA)	+= cs47l92-tables.o
+endif
+obj-$(CONFIG_MFD_MADERA_I2C)	+= madera-i2c.o
+obj-$(CONFIG_MFD_MADERA_SPI)	+= madera-spi.o
+
 obj-$(CONFIG_TPS6105X)		+= tps6105x.o
 obj-$(CONFIG_TPS65010)		+= tps65010.o
 obj-$(CONFIG_TPS6507X)		+= tps6507x.o
@@ -136,6 +152,8 @@ obj-$(CONFIG_MFD_MAX77620)	+= max77620.o
 obj-$(CONFIG_MFD_MAX77686)	+= max77686.o
 obj-$(CONFIG_MFD_MAX77693)	+= max77693.o
 obj-$(CONFIG_MFD_MAX77843)	+= max77843.o
+obj-$(CONFIG_MFD_MAX77865)	+= max77865.o max77865-irq.o
+obj-$(CONFIG_MFD_MAX77705)	+= max77705.o max77705-irq.o
 obj-$(CONFIG_MFD_MAX8907)	+= max8907.o
 max8925-objs			:= max8925-core.o max8925-i2c.o
 obj-$(CONFIG_MFD_MAX8925)	+= max8925.o
@@ -190,6 +208,9 @@ obj-$(CONFIG_MFD_RC5T583)	+= rc5t583.o rc5t583-irq.o
 obj-$(CONFIG_MFD_RK808)		+= rk808.o
 obj-$(CONFIG_MFD_RN5T618)	+= rn5t618.o
 obj-$(CONFIG_MFD_SEC_CORE)	+= sec-core.o sec-irq.o
+obj-$(CONFIG_MFD_S2MPS17)	+= s2mps17_core.o s2mps17_irq.o
+obj-$(CONFIG_MFD_S2MPS18)	+= s2mps18_core.o s2mps18_irq.o
+obj-$(CONFIG_MFD_S2MPB02)	+= s2mpb02-core.o s2mpb02-irq.o
 obj-$(CONFIG_MFD_SYSCON)	+= syscon.o
 obj-$(CONFIG_MFD_LM3533)	+= lm3533-core.o lm3533-ctrlbank.o
 obj-$(CONFIG_MFD_VEXPRESS_SYSREG)	+= vexpress-sysreg.o

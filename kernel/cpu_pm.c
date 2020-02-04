@@ -114,6 +114,18 @@ int cpu_pm_enter(void)
 }
 EXPORT_SYMBOL_GPL(cpu_pm_enter);
 
+int cpu_pm_enter_pre(void)
+{
+	int ret = 0;
+
+	read_lock(&cpu_pm_notifier_lock);
+	ret = cpu_pm_notify(CPU_PM_ENTER_PREPARE, -1, NULL);
+	read_unlock(&cpu_pm_notifier_lock);
+
+	return ret;
+}
+EXPORT_SYMBOL_GPL(cpu_pm_enter_pre);
+
 /**
  * cpu_pm_exit - CPU low power exit notifier
  *
@@ -137,6 +149,18 @@ int cpu_pm_exit(void)
 	return ret;
 }
 EXPORT_SYMBOL_GPL(cpu_pm_exit);
+
+int cpu_pm_exit_post(void)
+{
+	int ret;
+
+	read_lock(&cpu_pm_notifier_lock);
+	ret = cpu_pm_notify(CPU_PM_EXIT_POST, -1, NULL);
+	read_unlock(&cpu_pm_notifier_lock);
+
+	return ret;
+}
+EXPORT_SYMBOL_GPL(cpu_pm_exit_post);
 
 /**
  * cpu_cluster_pm_enter - CPU cluster low power entry notifier

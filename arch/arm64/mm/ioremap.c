@@ -29,6 +29,8 @@
 #include <asm/tlbflush.h>
 #include <asm/pgalloc.h>
 
+#include <soc/samsung/exynos-condbg.h>
+
 static void __iomem *__ioremap_caller(phys_addr_t phys_addr, size_t size,
 				      pgprot_t prot, void *caller)
 {
@@ -70,6 +72,8 @@ static void __iomem *__ioremap_caller(phys_addr_t phys_addr, size_t size,
 		return NULL;
 	}
 
+	ecd_hook_ioremap(phys_addr, offset + addr, size);
+
 	return (void __iomem *)(offset + addr);
 }
 
@@ -88,8 +92,10 @@ void __iounmap(volatile void __iomem *io_addr)
 	 * We could get an address outside vmalloc range in case
 	 * of ioremap_cache() reusing a RAM mapping.
 	 */
-	if (VMALLOC_START <= addr && addr < VMALLOC_END)
+	if (VMALLOC_START <= addr && addr < VMALLOC_END) {
 		vunmap((void *)addr);
+		ecd_hook_iounmap((unsigned long)addr);
+	}
 }
 EXPORT_SYMBOL(__iounmap);
 

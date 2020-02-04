@@ -1279,6 +1279,43 @@ config RTC_DRV_S3C
 	  This driver can also be build as a module. If so, the module
 	  will be called rtc-s3c.
 
+config RTC_DRV_SEC
+	tristate "Samsung PMIC series RTC"
+	depends on MFD_SEC_CORE
+	help
+	  If you say yes here you will get support for the
+	  RTC of Samsung PMIC series.
+	  This driver can also be built as a module. If so, the module
+	  will be called rtc-sec.
+
+config RTC_ALARM_BOOT
+	bool "Android alarm boot function"
+	depends on SEC_PM
+	default y
+	help
+	  This is for alarm booting function.
+	  This feature is based on Chinese models.
+	  However, it would be used on Factory test
+	  instead of Power key booting.
+
+config RTC_DRV_S2MPS17
+	tristate "Samsung PMIC series RTC"
+	depends on MFD_S2MPS17
+	help
+	  If you say yes here you will get support for the
+	  RTC of Samsung PMIC series.
+	  This driver can also be built as a module. If so, the module
+	  will be called rtc-s2mps17.
+
+config RTC_DRV_S2MPS18
+	tristate "Samsung PMIC series RTC"
+	depends on MFD_S2MPS18
+	help
+	  If you say yes here you will get support for the
+	  RTC of Samsung PMIC series.
+	  This driver can also be built as a module. If so, the module
+	  will be called rtc-s2mps18.
+
 config RTC_DRV_EP93XX
 	tristate "Cirrus Logic EP93XX"
 	depends on ARCH_EP93XX || COMPILE_TEST

@@ -32,4 +32,7 @@ struct dma_pl330_platdata {
 };
 
 extern bool pl330_filter(struct dma_chan *chan, void *param);
+extern int pl330_dma_getposition(struct dma_chan *chan,
+		dma_addr_t *src, dma_addr_t *dst);
+extern int pl330_dma_debug(struct dma_chan *chan);
 #endif	/* __AMBA_PL330_H_ */

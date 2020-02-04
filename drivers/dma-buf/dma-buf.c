@@ -317,6 +317,28 @@ static inline int is_dma_buf_file(struct file *file)
 }
 
 /**
+ * get_dma_buf_file - Finds dma_buf from a file descriptor
+ *
+ * @filp: [in] file descriptor to extract dma_buf.
+ *
+ * Returns the pointer to dma_buf stored in @filp after incrementing count.
+ * The returned dma_buf must be released with dma_buf_put().
+ * Returns NULL if @filp is not the file descriptor of dma_buf.
+ */
+struct dma_buf *get_dma_buf_file(struct file *filp)
+{
+	struct dma_buf *dmabuf;
+
+	if (!is_dma_buf_file(filp))
+		return NULL;
+
+	dmabuf = filp->private_data;
+
+	get_dma_buf(dmabuf);
+
+	return dmabuf;
+}
+/**
  * dma_buf_export - Creates a new dma_buf, and associates an anon file
  * with this buffer, so it can be exported.
  * Also connect the allocator specific data and ops to the buffer.
@@ -551,7 +573,7 @@ EXPORT_SYMBOL_GPL(dma_buf_detach);
 struct sg_table *dma_buf_map_attachment(struct dma_buf_attachment *attach,
 					enum dma_data_direction direction)
 {
-	struct sg_table *sg_table;
+	struct sg_table *sg_table = ERR_PTR(-EINVAL);
 
 	might_sleep();
 
@@ -855,6 +877,39 @@ void dma_buf_vunmap(struct dma_buf *dmabuf, void *vaddr)
 	mutex_unlock(&dmabuf->lock);
 }
 EXPORT_SYMBOL_GPL(dma_buf_vunmap);
+
+/**
+ * dma_buf_set_privflag - set the private flag for the buffer
+ * @dmabuf:	[in]	buffer to set the flag
+ */
+void dma_buf_set_privflag(struct dma_buf *dmabuf)
+{
+	if (WARN_ON(!dmabuf))
+		return;
+
+	if (!dmabuf->ops->set_privflag)
+		return;
+
+	dmabuf->ops->set_privflag(dmabuf);
+}
+EXPORT_SYMBOL_GPL(dma_buf_set_privflag);
+
+/**
+ * dma_buf_get_privflag - get the private flag for the buffer
+ * @dmabuf:	[in]	buffer to get the flag
+ * @clear:	[in]	if set, the flag need to be clear.
+ */
+bool dma_buf_get_privflag(struct dma_buf *dmabuf, bool clear)
+{
+	if (WARN_ON(!dmabuf))
+		return false;
+
+	if (!dmabuf->ops->get_privflag)
+		return false;
+
+	return dmabuf->ops->get_privflag(dmabuf, clear);
+}
+EXPORT_SYMBOL_GPL(dma_buf_get_privflag);
 
 #ifdef CONFIG_DEBUG_FS
 static int dma_buf_debug_show(struct seq_file *s, void *unused)

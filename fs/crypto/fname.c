@@ -58,8 +58,11 @@ int fname_encrypt(struct inode *inode, const struct qstr *iname,
 
 	/* Set up the encryption request */
 	req = skcipher_request_alloc(tfm, GFP_NOFS);
-	if (!req)
+	if (!req) {
+		printk_ratelimited(KERN_ERR
+			"%s: skcipher_request_alloc() failed\n", __func__);
 		return -ENOMEM;
+	}
 	skcipher_request_set_callback(req,
 			CRYPTO_TFM_REQ_MAY_BACKLOG | CRYPTO_TFM_REQ_MAY_SLEEP,
 			crypto_req_done, &wait);
@@ -70,9 +73,8 @@ int fname_encrypt(struct inode *inode, const struct qstr *iname,
 	res = crypto_wait_req(crypto_skcipher_encrypt(req), &wait);
 	skcipher_request_free(req);
 	if (res < 0) {
-		fscrypt_err(inode->i_sb,
-			    "Filename encryption failed for inode %lu: %d",
-			    inode->i_ino, res);
+		printk_ratelimited(KERN_ERR
+				"%s: Error (error code %d)\n", __func__, res);
 		return res;
 	}
 
@@ -93,14 +95,23 @@ static int fname_decrypt(struct inode *inode,
 	struct skcipher_request *req = NULL;
 	DECLARE_CRYPTO_WAIT(wait);
 	struct scatterlist src_sg, dst_sg;
-	struct crypto_skcipher *tfm = inode->i_crypt_info->ci_ctfm;
+	struct fscrypt_info *ci = inode->i_crypt_info;
+	struct crypto_skcipher *tfm = ci->ci_ctfm;
 	int res = 0;
 	char iv[FS_CRYPTO_BLOCK_SIZE];
+	unsigned lim;
+
+	lim = inode->i_sb->s_cop->max_namelen(inode);
+	if (iname->len <= 0 || iname->len > lim)
+		return -EIO;
 
 	/* Allocate request */
 	req = skcipher_request_alloc(tfm, GFP_NOFS);
-	if (!req)
+	if (!req) {
+		printk_ratelimited(KERN_ERR
+			"%s: crypto_request_alloc() failed\n",  __func__);
 		return -ENOMEM;
+	}
 	skcipher_request_set_callback(req,
 		CRYPTO_TFM_REQ_MAY_BACKLOG | CRYPTO_TFM_REQ_MAY_SLEEP,
 		crypto_req_done, &wait);
@@ -115,9 +126,8 @@ static int fname_decrypt(struct inode *inode,
 	res = crypto_wait_req(crypto_skcipher_decrypt(req), &wait);
 	skcipher_request_free(req);
 	if (res < 0) {
-		fscrypt_err(inode->i_sb,
-			    "Filename decryption failed for inode %lu: %d",
-			    inode->i_ino, res);
+		printk_ratelimited(KERN_ERR
+				"%s: Error (error code %d)\n", __func__, res);
 		return res;
 	}
 
@@ -330,12 +340,12 @@ int fscrypt_setup_filename(struct inode *dir, const struct qstr *iname,
 		return 0;
 	}
 	ret = fscrypt_get_encryption_info(dir);
-	if (ret)
+	if (ret && ret != -EOPNOTSUPP)
 		return ret;
 
 	if (dir->i_crypt_info) {
 		if (!fscrypt_fname_encrypted_size(dir, iname->len,
-						  dir->i_sb->s_cop->max_namelen,
+						  dir->i_sb->s_cop->max_namelen(dir),
 						  &fname->crypto_buf.len))
 			return -ENAMETOOLONG;
 		fname->crypto_buf.name = kmalloc(fname->crypto_buf.len,

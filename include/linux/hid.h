@@ -536,6 +536,8 @@ struct hid_device {							/* device report descriptor */
 	struct list_head inputs;					/* The list of inputs */
 	void *hiddev;							/* The hiddev structure */
 	void *hidraw;
+	void *hidovr;
+	void *hidtvr;
 	int minor;							/* Hiddev minor number */
 
 	int open;							/* is the device open by anyone? */

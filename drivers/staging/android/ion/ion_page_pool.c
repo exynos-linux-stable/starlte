@@ -22,18 +22,17 @@
 #include <linux/init.h>
 #include <linux/slab.h>
 #include <linux/swap.h>
+#include <asm/cacheflush.h>
 #include "ion_priv.h"
 
-static void *ion_page_pool_alloc_pages(struct ion_page_pool *pool)
+static void *ion_page_pool_alloc_pages(struct ion_page_pool *pool, bool zeroed)
 {
-	struct page *page = alloc_pages(pool->gfp_mask, pool->order);
+	gfp_t gfp_mask = pool->gfp_mask;
 
-	if (!page)
-		return NULL;
-	if (!pool->cached)
-		ion_pages_sync_for_device(NULL, page, PAGE_SIZE << pool->order,
-					  DMA_BIDIRECTIONAL);
-	return page;
+	if (!zeroed)
+		gfp_mask &= ~__GFP_ZERO;
+
+	return alloc_pages(gfp_mask, pool->order);
 }
 
 static void ion_page_pool_free_pages(struct ion_page_pool *pool,
@@ -44,7 +43,7 @@ static void ion_page_pool_free_pages(struct ion_page_pool *pool,
 
 static int ion_page_pool_add(struct ion_page_pool *pool, struct page *page)
 {
-	mutex_lock(&pool->mutex);
+	spin_lock(&pool->lock);
 	if (PageHighMem(page)) {
 		list_add_tail(&page->lru, &pool->high_items);
 		pool->high_count++;
@@ -52,11 +51,11 @@ static int ion_page_pool_add(struct ion_page_pool *pool, struct page *page)
 		list_add_tail(&page->lru, &pool->low_items);
 		pool->low_count++;
 	}
-	mutex_unlock(&pool->mutex);
+	spin_unlock(&pool->lock);
 	return 0;
 }
 
-static struct page *ion_page_pool_remove(struct ion_page_pool *pool, bool high)
+struct page *ion_page_pool_remove(struct ion_page_pool *pool, bool high)
 {
 	struct page *page;
 
@@ -74,22 +73,48 @@ static struct page *ion_page_pool_remove(struct ion_page_pool *pool, bool high)
 	return page;
 }
 
-struct page *ion_page_pool_alloc(struct ion_page_pool *pool)
+void *ion_page_pool_only_alloc(struct ion_page_pool *pool)
 {
 	struct page *page = NULL;
 
 	BUG_ON(!pool);
 
-	mutex_lock(&pool->mutex);
+	if (!pool->high_count && !pool->low_count)
+		goto done;
+
+	if (spin_trylock(&pool->lock)) {
+	    if (pool->high_count)
+		    page = ion_page_pool_remove(pool, true);
+	    else if (pool->low_count)
+		    page = ion_page_pool_remove(pool, false);
+	    spin_unlock(&pool->lock);
+	}
+done:
+	return page;
+}
+
+struct page *ion_page_pool_alloc(struct ion_page_pool *pool, bool zeroed)
+{
+	struct page *page = NULL;
+
+	BUG_ON(!pool);
+
+	spin_lock(&pool->lock);
 	if (pool->high_count)
 		page = ion_page_pool_remove(pool, true);
 	else if (pool->low_count)
 		page = ion_page_pool_remove(pool, false);
-	mutex_unlock(&pool->mutex);
+	spin_unlock(&pool->lock);
 
-	if (!page)
-		page = ion_page_pool_alloc_pages(pool);
-
+	if (!page) {
+		page = ion_page_pool_alloc_pages(pool, zeroed);
+		/*
+		 * PGMASK_PAGE_FROM_BUDDY should be cleared by the allocator of
+		 * the heap before providing the buffer to the client.
+		 */
+		if (page)
+			ION_SET_PAGE_FROM_BUDDY(page);
+	}
 	return page;
 }
 
@@ -97,14 +122,19 @@ void ion_page_pool_free(struct ion_page_pool *pool, struct page *page)
 {
 	int ret;
 
-	BUG_ON(pool->order != compound_order(page));
+	/*
+	 * ION RBIN heap can utilize ion_page_pool_free() for pages which are
+	 * not compound pages. Thus, comment out the below line.
+	 *
+	 * BUG_ON(pool->order != compound_order(page));
+	 */
 
 	ret = ion_page_pool_add(pool, page);
 	if (ret)
 		ion_page_pool_free_pages(pool, page);
 }
 
-static int ion_page_pool_total(struct ion_page_pool *pool, bool high)
+int ion_page_pool_total(struct ion_page_pool *pool, bool high)
 {
 	int count = pool->low_count;
 
@@ -131,16 +161,16 @@ int ion_page_pool_shrink(struct ion_page_pool *pool, gfp_t gfp_mask,
 	while (freed < nr_to_scan) {
 		struct page *page;
 
-		mutex_lock(&pool->mutex);
+		spin_lock(&pool->lock);
 		if (pool->low_count) {
 			page = ion_page_pool_remove(pool, false);
 		} else if (high && pool->high_count) {
 			page = ion_page_pool_remove(pool, true);
 		} else {
-			mutex_unlock(&pool->mutex);
+			spin_unlock(&pool->lock);
 			break;
 		}
-		mutex_unlock(&pool->mutex);
+		spin_unlock(&pool->lock);
 		ion_page_pool_free_pages(pool, page);
 		freed += (1 << pool->order);
 	}
@@ -161,7 +191,7 @@ struct ion_page_pool *ion_page_pool_create(gfp_t gfp_mask, unsigned int order,
 	INIT_LIST_HEAD(&pool->high_items);
 	pool->gfp_mask = gfp_mask | __GFP_COMP;
 	pool->order = order;
-	mutex_init(&pool->mutex);
+	spin_lock_init(&pool->lock);
 	plist_node_init(&pool->list, order);
 	if (cached)
 		pool->cached = true;

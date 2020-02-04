@@ -358,6 +358,11 @@ static void select_bad_process(struct oom_control *oc)
 	oc->chosen_points = oc->chosen_points * 1000 / oc->totalpages;
 }
 
+#if defined(CONFIG_ZSWAP)
+extern u64 zswap_pool_pages;
+extern atomic_t zswap_stored_pages;
+#endif
+
 /**
  * dump_tasks - dump current memory state of all system tasks
  * @memcg: current's memory controller, if constrained
@@ -369,12 +374,27 @@ static void select_bad_process(struct oom_control *oc)
  * State information includes task's pid, uid, tgid, vm size, rss, nr_ptes,
  * swapents, oom_score_adj value, and name.
  */
-static void dump_tasks(struct mem_cgroup *memcg, const nodemask_t *nodemask)
+void dump_tasks(struct mem_cgroup *memcg, const nodemask_t *nodemask)
 {
 	struct task_struct *p;
 	struct task_struct *task;
+	unsigned long cur_rss_sum;
+	unsigned long heaviest_rss_sum = 0;
+	char heaviest_comm[TASK_COMM_LEN];
+	pid_t heaviest_pid;
+#if defined(CONFIG_ZSWAP)
+	int zswap_stored_pages_temp;
+	unsigned long zswap_pool_pages_temp;
+	unsigned long tasksize_swap;
+#endif
 
+#if defined(CONFIG_ZSWAP)
+	zswap_stored_pages_temp = atomic_read(&zswap_stored_pages);
+	zswap_pool_pages_temp = zswap_pool_pages;
+	pr_info("[ pid ]   uid  tgid total_vm total_rss (   rss     swap  ) nr_ptes nr_pmds swapents oom_score_adj name\n");
+#else
 	pr_info("[ pid ]   uid  tgid total_vm      rss nr_ptes nr_pmds swapents oom_score_adj name\n");
+#endif
 	rcu_read_lock();
 	for_each_process(p) {
 		if (oom_unkillable_task(p, memcg, nodemask))
@@ -390,21 +410,61 @@ static void dump_tasks(struct mem_cgroup *memcg, const nodemask_t *nodemask)
 			continue;
 		}
 
+#if defined(CONFIG_ZSWAP)
+		if (zswap_stored_pages_temp)
+			tasksize_swap = zswap_pool_pages_temp
+					* get_mm_counter(task->mm, MM_SWAPENTS)
+					/ zswap_stored_pages_temp;
+		else
+			tasksize_swap = 0;
+		pr_info("[%5d] %5d %5d %8lu  %8lu (%8lu %8lu) %7ld %7ld %8lu         %5hd %s\n",
+#else
 		pr_info("[%5d] %5d %5d %8lu %8lu %7ld %7ld %8lu         %5hd %s\n",
+#endif
+
 			task->pid, from_kuid(&init_user_ns, task_uid(task)),
-			task->tgid, task->mm->total_vm, get_mm_rss(task->mm),
+			task->tgid, task->mm->total_vm,
+#if defined(CONFIG_ZSWAP)
+			get_mm_rss(task->mm) + tasksize_swap,
+			get_mm_rss(task->mm), tasksize_swap,
+#else
+			get_mm_rss(task->mm),
+#endif
 			atomic_long_read(&task->mm->nr_ptes),
 			mm_nr_pmds(task->mm),
 			get_mm_counter(task->mm, MM_SWAPENTS),
 			task->signal->oom_score_adj, task->comm);
+		cur_rss_sum = get_mm_rss(task->mm) +
+					get_mm_counter(task->mm, MM_SWAPENTS);
+		if (cur_rss_sum > heaviest_rss_sum) {
+			heaviest_rss_sum = cur_rss_sum;
+			strncpy(heaviest_comm, task->comm, TASK_COMM_LEN);
+			heaviest_pid = task->pid;
+		}
 		task_unlock(task);
 	}
 	rcu_read_unlock();
+	if (heaviest_rss_sum)
+		pr_info("heaviest_task:%s(%d) rss_pages:%lu\n", heaviest_comm,
+			heaviest_pid, heaviest_rss_sum);
+}
+
+static BLOCKING_NOTIFIER_HEAD(oomdebug_notify_list);
+
+int register_oomdebug_notifier(struct notifier_block *nb)
+{
+	return blocking_notifier_chain_register(&oomdebug_notify_list, nb);
+}
+
+int unregister_oomdebug_notifier(struct notifier_block *nb)
+{
+	return blocking_notifier_chain_unregister(&oomdebug_notify_list, nb);
 }
 
 static void dump_header(struct oom_control *oc, struct task_struct *p)
 {
 	nodemask_t *nm = (oc->nodemask) ? oc->nodemask : &cpuset_current_mems_allowed;
+	int v = 0;
 
 	pr_warn("%s invoked oom-killer: gfp_mask=%#x(%pGg), nodemask=%*pbl, order=%d, oom_score_adj=%hd\n",
 		current->comm, oc->gfp_mask, &oc->gfp_mask,
@@ -421,6 +481,8 @@ static void dump_header(struct oom_control *oc, struct task_struct *p)
 		show_mem(SHOW_MEM_FILTER_NODES);
 	if (sysctl_oom_dump_tasks)
 		dump_tasks(oc->memcg, oc->nodemask);
+
+	blocking_notifier_call_chain(&oomdebug_notify_list, 0, &v);
 }
 
 /*

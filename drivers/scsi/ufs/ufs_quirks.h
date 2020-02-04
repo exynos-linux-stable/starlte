@@ -21,9 +21,16 @@
 #define UFS_ANY_VENDOR 0xFFFF
 #define UFS_ANY_MODEL  "ANY_MODEL"
 
+#define MAX_MODEL_LEN 16
+
 #define UFS_VENDOR_TOSHIBA     0x198
 #define UFS_VENDOR_SAMSUNG     0x1CE
 #define UFS_VENDOR_SKHYNIX     0x1AD
+
+/*uniqueu number*/
+#define UFS_UN_20_DIGITS 20
+#define UFS_UN_MAX_DIGITS 21 //current max digit + 1
+
 
 /**
  * ufs_dev_fix - ufs device quirk info
@@ -52,6 +59,7 @@ struct ufs_dev_fix {
  * TX_LCC_ENABLE attribute of host to 0).
  */
 #define UFS_DEVICE_QUIRK_BROKEN_LCC (1 << 0)
+#define UFS_DEVICE_QUIRK_BROKEN_LINEREST	UFS_BIT(1)
 
 /*
  * Some UFS devices don't need VCCQ rail for device operations. Enabling this
@@ -116,10 +124,18 @@ struct ufs_dev_fix {
 #define UFS_DEVICE_QUIRK_DELAY_BEFORE_LPM	(1 << 6)
 
 /*
+ * Some UFS devices support the FATAL MODE
+ * to gether the debug info.
+ */
+#define UFS_DEVICE_QUIRK_SUPPORT_QUERY_FATAL_MODE	(1 << 9)
+
+struct ufs_hba;
+/*
  * Some UFS devices require host PA_TACTIVATE to be lower than device
  * PA_TACTIVATE, enabling this quirk ensure this.
  */
 #define UFS_DEVICE_QUIRK_HOST_PA_TACTIVATE	(1 << 7)
+
 
 /*
  * The max. value PA_SaveConfigTime is 250 (10us) but this is not enough for
@@ -130,5 +146,6 @@ struct ufs_dev_fix {
  * PA_SaveConfigTime to >32us as per vendor recommendation.
  */
 #define UFS_DEVICE_QUIRK_HOST_PA_SAVECONFIGTIME	(1 << 8)
+void ufs_set_sec_unique_number(struct ufs_hba *hba, u8 *str_desc_buf, u8 *desc_buf);
 
 #endif /* UFS_QUIRKS_H_ */

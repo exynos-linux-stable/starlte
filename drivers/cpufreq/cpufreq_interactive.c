@@ -31,6 +31,7 @@
 #include <linux/timer.h>
 #include <linux/kthread.h>
 #include <linux/slab.h>
+#include <linux/pm_qos.h>
 
 #define CREATE_TRACE_POINTS
 #include <trace/events/cpufreq_interactive.h>
@@ -157,6 +158,7 @@ static unsigned int default_above_hispeed_delay[] = {
 	list_for_each_entry(__ip, &tunables->attr_set.policy_list, tunables_hook)
 
 static struct interactive_tunables *global_tunables;
+static struct interactive_tunables *user_global_tunables[NR_CPUS];
 static DEFINE_MUTEX(global_tunables_lock);
 
 static inline void update_slack_delay(struct interactive_tunables *tunables)
@@ -569,7 +571,7 @@ again:
 
 	for_each_cpu(cpu, &tmp_mask) {
 		struct interactive_cpu *icpu = &per_cpu(interactive_cpu, cpu);
-		struct cpufreq_policy *policy;
+		struct cpufreq_policy *policy = NULL;
 
 		if (unlikely(!down_read_trylock(&icpu->enable_sem)))
 			continue;
@@ -600,6 +602,10 @@ static void cpufreq_interactive_boost(struct interactive_tunables *tunables)
 
 	for_each_ipolicy(ipolicy) {
 		policy = ipolicy->policy;
+
+		/* must boost frequency about boosted ipolicy */
+		if (!ipolicy->tunables->boosted)
+			continue;
 
 		for_each_cpu(i, policy->cpus) {
 			icpu = &per_cpu(interactive_cpu, i);
@@ -683,7 +689,7 @@ static unsigned int *get_tokenized_data(const char *buf, int *num_tokens)
 
 	cp = buf;
 	while (i < ntokens) {
-		if (kstrtouint(cp, 0, &tokenized_data[i++]) < 0)
+		if (sscanf(cp, "%u", &tokenized_data[i++]) != 1)
 			goto err_kfree;
 
 		cp = strpbrk(cp, " :");
@@ -1143,10 +1149,14 @@ interactive_tunables_alloc(struct interactive_policy *ipolicy)
 	return tunables;
 }
 
-static void interactive_tunables_free(struct interactive_tunables *tunables)
+static void interactive_tunables_free(struct interactive_tunables *tunables,
+					int cpu)
 {
 	if (!have_governor_per_policy())
 		global_tunables = NULL;
+
+	if (cpu >= 0 && user_global_tunables[cpu])
+		return;
 
 	kfree(tunables);
 }
@@ -1156,6 +1166,7 @@ int cpufreq_interactive_init(struct cpufreq_policy *policy)
 	struct interactive_policy *ipolicy;
 	struct interactive_tunables *tunables;
 	int ret;
+	int first_cpu = (int)cpumask_first(policy->related_cpus);
 
 	/* State should be equivalent to EXIT */
 	if (policy->governor_data)
@@ -1181,27 +1192,39 @@ int cpufreq_interactive_init(struct cpufreq_policy *policy)
 		goto out;
 	}
 
-	tunables = interactive_tunables_alloc(ipolicy);
-	if (!tunables) {
-		ret = -ENOMEM;
-		goto free_int_policy;
+	if (!user_global_tunables[first_cpu]) {
+		tunables = interactive_tunables_alloc(ipolicy);
+		if (!tunables) {
+			ret = -ENOMEM;
+			goto free_int_policy;
+		}
+
+		tunables->hispeed_freq = policy->max;
+		tunables->above_hispeed_delay = default_above_hispeed_delay;
+		tunables->nabove_hispeed_delay =
+			ARRAY_SIZE(default_above_hispeed_delay);
+		tunables->go_hispeed_load = DEFAULT_GO_HISPEED_LOAD;
+		tunables->target_loads = default_target_loads;
+		tunables->ntarget_loads = ARRAY_SIZE(default_target_loads);
+		tunables->min_sample_time = DEFAULT_MIN_SAMPLE_TIME;
+		tunables->boostpulse_duration = DEFAULT_MIN_SAMPLE_TIME;
+		tunables->sampling_rate = DEFAULT_SAMPLING_RATE;
+		tunables->timer_slack = DEFAULT_TIMER_SLACK;
+		update_slack_delay(tunables);
+
+		spin_lock_init(&tunables->target_loads_lock);
+		spin_lock_init(&tunables->above_hispeed_delay_lock);
+	} else {
+		tunables = user_global_tunables[first_cpu];
+		memset((void *) tunables, 0, sizeof(struct gov_attr_set));
+
+		gov_attr_set_init(&tunables->attr_set, &ipolicy->tunables_hook);
+		if (!have_governor_per_policy())
+			global_tunables = tunables;
+
+		ipolicy->tunables = tunables;
+		update_slack_delay(tunables);
 	}
-
-	tunables->hispeed_freq = policy->max;
-	tunables->above_hispeed_delay = default_above_hispeed_delay;
-	tunables->nabove_hispeed_delay =
-		ARRAY_SIZE(default_above_hispeed_delay);
-	tunables->go_hispeed_load = DEFAULT_GO_HISPEED_LOAD;
-	tunables->target_loads = default_target_loads;
-	tunables->ntarget_loads = ARRAY_SIZE(default_target_loads);
-	tunables->min_sample_time = DEFAULT_MIN_SAMPLE_TIME;
-	tunables->boostpulse_duration = DEFAULT_MIN_SAMPLE_TIME;
-	tunables->sampling_rate = DEFAULT_SAMPLING_RATE;
-	tunables->timer_slack = DEFAULT_TIMER_SLACK;
-	update_slack_delay(tunables);
-
-	spin_lock_init(&tunables->target_loads_lock);
-	spin_lock_init(&tunables->above_hispeed_delay_lock);
 
 	policy->governor_data = ipolicy;
 
@@ -1219,13 +1242,14 @@ int cpufreq_interactive_init(struct cpufreq_policy *policy)
 					  CPUFREQ_TRANSITION_NOTIFIER);
 	}
 
+	user_global_tunables[first_cpu] = tunables;
  out:
 	mutex_unlock(&global_tunables_lock);
 	return 0;
 
  fail:
 	policy->governor_data = NULL;
-	interactive_tunables_free(tunables);
+	interactive_tunables_free(tunables, -1);
 
  free_int_policy:
 	mutex_unlock(&global_tunables_lock);
@@ -1241,6 +1265,7 @@ void cpufreq_interactive_exit(struct cpufreq_policy *policy)
 	struct interactive_policy *ipolicy = policy->governor_data;
 	struct interactive_tunables *tunables = ipolicy->tunables;
 	unsigned int count;
+	int first_cpu = (int)cpumask_first(policy->related_cpus);
 
 	mutex_lock(&global_tunables_lock);
 
@@ -1254,7 +1279,7 @@ void cpufreq_interactive_exit(struct cpufreq_policy *policy)
 	count = gov_attr_set_put(&tunables->attr_set, &ipolicy->tunables_hook);
 	policy->governor_data = NULL;
 	if (!count)
-		interactive_tunables_free(tunables);
+		interactive_tunables_free(tunables, first_cpu);
 
 	mutex_unlock(&global_tunables_lock);
 
@@ -1353,6 +1378,182 @@ static void cpufreq_interactive_nop_timer(unsigned long data)
 	 */
 }
 
+#ifdef CONFIG_CPU_FREQ_DEFAULT_GOV_INTERACTIVE
+static int cpufreq_interactive_cluster1_min_qos_handler(struct notifier_block *b,
+						unsigned long val, void *v)
+{
+	struct interactive_cpu *icpu;
+	unsigned long flags;
+	int ret = NOTIFY_OK;
+	int cpu;
+	struct cpumask mask;
+
+	cpumask_xor(&mask, cpu_possible_mask, cpu_coregroup_mask(0));
+	cpumask_and(&mask, &mask, cpu_online_mask);
+	if (cpumask_empty(&mask)) {
+		ret = NOTIFY_BAD;
+		goto exit;
+	}
+
+	cpu = (int) cpumask_first(&mask);
+
+
+	icpu = &per_cpu(interactive_cpu, cpu);
+
+	if (!icpu || !icpu->ipolicy || icpu->ipolicy->policy
+		|| icpu->ipolicy->policy->governor_data) {
+		ret = NOTIFY_BAD;
+		goto exit;
+	}
+
+	//trace_cpufreq_interactive_cpu_min_qos(cpu, val, icpu->policy->cur);
+
+	if (unlikely(!down_read_trylock(&icpu->enable_sem)))
+		goto exit;
+
+	if (icpu->ipolicy && (val < icpu->ipolicy->policy->cur)) {
+		spin_lock_irqsave(&speedchange_cpumask_lock, flags);
+		cpumask_set_cpu(cpu, &speedchange_cpumask);
+		spin_unlock_irqrestore(&speedchange_cpumask_lock, flags);
+
+		if (speedchange_task)
+			wake_up_process(speedchange_task);
+	}
+
+	up_read(&icpu->enable_sem);
+exit:
+	return ret;
+}
+
+static struct notifier_block cpufreq_interactive_cluster1_min_qos_notifier = {
+	.notifier_call = cpufreq_interactive_cluster1_min_qos_handler,
+};
+
+static int cpufreq_interactive_cluster1_max_qos_handler(struct notifier_block *b,
+						unsigned long val, void *v)
+{
+	struct interactive_cpu *icpu;
+	unsigned long flags;
+	int ret = NOTIFY_OK;
+	int cpu;
+	struct cpumask mask;
+
+	cpumask_xor(&mask, cpu_possible_mask, cpu_coregroup_mask(0));
+	cpumask_and(&mask, &mask, cpu_online_mask);
+	cpu = (int) cpumask_first(&mask);
+	if (cpumask_empty(&mask)) {
+		ret = NOTIFY_BAD;
+		goto exit;
+	}
+
+	icpu = &per_cpu(interactive_cpu, cpu);
+
+	if (!icpu || !icpu->ipolicy || icpu->ipolicy->policy
+		|| icpu->ipolicy->policy->governor_data) {
+		ret = NOTIFY_BAD;
+		goto exit;
+	}
+
+	//trace_cpufreq_interactive_cpu_max_qos(cpu, val, icpu->policy->cur);
+
+	if (unlikely(!down_read_trylock(&icpu->enable_sem)))
+		goto exit;
+
+	if (icpu->ipolicy && (val > icpu->ipolicy->policy->cur)) {
+		spin_lock_irqsave(&speedchange_cpumask_lock, flags);
+		cpumask_set_cpu(cpu, &speedchange_cpumask);
+		spin_unlock_irqrestore(&speedchange_cpumask_lock, flags);
+
+		if (speedchange_task)
+			wake_up_process(speedchange_task);
+	}
+
+	up_read(&icpu->enable_sem);
+exit:
+	return ret;
+}
+
+static struct notifier_block cpufreq_interactive_cluster1_max_qos_notifier = {
+	.notifier_call = cpufreq_interactive_cluster1_max_qos_handler,
+};
+
+static int cpufreq_interactive_cluster0_min_qos_handler(struct notifier_block *b,
+						unsigned long val, void *v)
+{
+	struct interactive_cpu *icpu;
+	unsigned long flags;
+	int ret = NOTIFY_OK;
+	int cpu = 0; /* policy cpu of cluster 1 */
+
+	icpu = &per_cpu(interactive_cpu, cpu);
+
+	if (!icpu || !icpu->ipolicy || icpu->ipolicy->policy
+		|| icpu->ipolicy->policy->governor_data) {
+		ret = NOTIFY_BAD;
+		goto exit;
+	}
+
+	//trace_cpufreq_interactive_cpu_min_qos(cpu, val, icpu->policy->cur);
+	if (unlikely(!down_read_trylock(&icpu->enable_sem)))
+		goto exit;
+
+	if (icpu->ipolicy && (val < icpu->ipolicy->policy->cur)) {
+		spin_lock_irqsave(&speedchange_cpumask_lock, flags);
+		cpumask_set_cpu(cpu, &speedchange_cpumask);
+		spin_unlock_irqrestore(&speedchange_cpumask_lock, flags);
+
+		if (speedchange_task)
+			wake_up_process(speedchange_task);
+	}
+
+	up_read(&icpu->enable_sem);
+exit:
+	return ret;
+}
+
+static struct notifier_block cpufreq_interactive_cluster0_min_qos_notifier = {
+	.notifier_call = cpufreq_interactive_cluster0_min_qos_handler,
+};
+
+static int cpufreq_interactive_cluster0_max_qos_handler(struct notifier_block *b,
+						unsigned long val, void *v)
+{
+	struct interactive_cpu *icpu;
+	unsigned long flags;
+	int ret = NOTIFY_OK;
+	int cpu = 0; /* policy cpu of cluster 1 */
+
+	icpu = &per_cpu(interactive_cpu, cpu);
+
+	if (!icpu || !icpu->ipolicy || icpu->ipolicy->policy
+		|| icpu->ipolicy->policy->governor_data) {
+		ret = NOTIFY_BAD;
+		goto exit;
+	}
+
+	//trace_cpufreq_interactive_cpu_max_qos(cpu, val, icpu->policy->cur);
+	if (unlikely(!down_read_trylock(&icpu->enable_sem)))
+		goto exit;
+
+	if (icpu->ipolicy && (val > icpu->ipolicy->policy->cur)) {
+		spin_lock_irqsave(&speedchange_cpumask_lock, flags);
+		cpumask_set_cpu(cpu, &speedchange_cpumask);
+		spin_unlock_irqrestore(&speedchange_cpumask_lock, flags);
+
+		if (speedchange_task)
+			wake_up_process(speedchange_task);
+	}
+
+	up_read(&icpu->enable_sem);
+exit:
+	return ret;
+}
+
+static struct notifier_block cpufreq_interactive_cluster0_max_qos_notifier = {
+	.notifier_call = cpufreq_interactive_cluster0_max_qos_handler,
+};
+#endif
+
 static int __init cpufreq_interactive_gov_init(void)
 {
 	struct sched_param param = { .sched_priority = MAX_RT_PRIO - 1 };
@@ -1383,6 +1584,13 @@ static int __init cpufreq_interactive_gov_init(void)
 
 	/* wake up so the thread does not look hung to the freezer */
 	wake_up_process(speedchange_task);
+
+#ifdef CONFIG_CPU_FREQ_DEFAULT_GOV_INTERACTIVE
+	pm_qos_add_notifier(PM_QOS_CLUSTER0_FREQ_MIN, &cpufreq_interactive_cluster0_min_qos_notifier);
+	pm_qos_add_notifier(PM_QOS_CLUSTER0_FREQ_MAX, &cpufreq_interactive_cluster0_max_qos_notifier);
+	pm_qos_add_notifier(PM_QOS_CLUSTER1_FREQ_MIN, &cpufreq_interactive_cluster1_min_qos_notifier);
+	pm_qos_add_notifier(PM_QOS_CLUSTER1_FREQ_MAX, &cpufreq_interactive_cluster1_max_qos_notifier);
+#endif
 
 	return cpufreq_register_governor(CPU_FREQ_GOV_INTERACTIVE);
 }

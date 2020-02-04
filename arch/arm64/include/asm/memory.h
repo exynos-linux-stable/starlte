@@ -46,7 +46,11 @@
  * requires its definition to be available at this point in the inclusion
  * chain, and it may not be a power of 2 in the first place.
  */
+#ifdef CONFIG_MEMCG
+	#define STRUCT_PAGE_MAX_SHIFT	7
+#else
 #define STRUCT_PAGE_MAX_SHIFT	6
+#endif
 
 /*
  * VMEMMAP_SIZE - allows the whole linear region to be covered by
@@ -223,6 +227,14 @@ static inline void *phys_to_virt(phys_addr_t x)
 #define _virt_addr_is_linear(kaddr)	(((u64)(kaddr)) >= PAGE_OFFSET)
 #define virt_addr_valid(kaddr)		(_virt_addr_is_linear(kaddr) && \
 					 _virt_addr_valid(kaddr))
+
+#define ZONE_MOVABLE_SIZE_BYTES	0
+
+#if defined(CONFIG_ZONE_MOVABLE) && defined(CONFIG_ZONE_MOVABLE_SIZE_MBYTES) \
+					&& (CONFIG_ZONE_MOVABLE_SIZE_MBYTES > 0)
+#undef ZONE_MOVABLE_SIZE_BYTES
+#define ZONE_MOVABLE_SIZE_BYTES	((u32)(CONFIG_ZONE_MOVABLE_SIZE_MBYTES << 20))
+#endif
 
 #include <asm-generic/memory_model.h>
 

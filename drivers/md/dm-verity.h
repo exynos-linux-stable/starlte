@@ -17,7 +17,9 @@
 #include <crypto/hash.h>
 
 #define DM_VERITY_MAX_LEVELS		63
-
+#ifdef DMV_ALTA
+#define IO_RETRY_MAX			2
+#endif
 enum verity_mode {
 	DM_VERITY_MODE_EIO,
 	DM_VERITY_MODE_LOGGING,
@@ -64,6 +66,9 @@ struct dm_verity {
 
 	struct dm_verity_fec *fec;	/* forward error correction */
 	unsigned long *validated_blocks; /* bitset blocks validated */
+#ifdef DMV_ALTA
+	u8 *verity_bitmap; /* bitmap for skipping verification on blocks */
+#endif
 };
 
 struct dm_verity_io {
@@ -78,7 +83,9 @@ struct dm_verity_io {
 	struct bvec_iter iter;
 
 	struct work_struct work;
-
+#ifdef DMV_ALTA
+	int io_retry;
+#endif
 	/*
 	 * Three variably-size fields follow this struct:
 	 *

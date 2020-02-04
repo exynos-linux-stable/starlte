@@ -125,12 +125,21 @@ config REGULATOR_AB8500
 	  This driver supports the regulators found on the ST-Ericsson mixed
 	  signal AB8500 PMIC
 
-config REGULATOR_ARIZONA
-	tristate "Wolfson Arizona class devices"
-	depends on MFD_ARIZONA
+config REGULATOR_ARIZONA_LDO1
+	tristate "Cirrus Madera and Wolfson Arizona class devices LDO1"
+	depends on MFD_ARIZONA || MFD_MADERA
 	depends on SND_SOC
 	help
-	  Support for the regulators found on Wolfson Arizona class
+	  Support for the LDO1 regulators found on Cirrus Logic Madera codecs
+	  and Wolfson Arizona codecs.
+
+config REGULATOR_ARIZONA_MICSUPP
+	tristate "Cirrus Madera and Wolfson Arizona class devices MICSUPP"
+	depends on MFD_ARIZONA || MFD_MADERA
+	depends on SND_SOC
+	help
+	  Support for the MICSUPP regulators found on Cirrus Logic Madera codecs
+	  and Wolfson Arizona codecs
 	  devices.
 
 config REGULATOR_AS3711
@@ -682,6 +691,49 @@ config REGULATOR_S2MPS11
 	 output regulator via I2C bus. The chip is comprised of high efficient
 	 Buck converters including Dual-Phase Buck converter, Buck-Boost
 	 converter, various LDOs.
+config REGULATOR_S2MPS17
+	tristate "Samsung S2MPS17 voltage regulator"
+	depends on MFD_S2MPS17
+	help
+	 This driver supports a Samsung S2MPS17 voltage output regulator
+	 via I2C bus. S2MPS17 is comprised of high efficient Buck converters
+	 including Dual-Phase Buck converter, Buck-Boost converter, various LDOs.
+
+config REGULATOR_S2MPS18
+	tristate "Samsung S2MPS18 voltage regulator"
+	depends on MFD_S2MPS18
+	help
+	 This driver supports a Samsung S2MPS18 voltage output regulator
+	 via I2C bus. S2MPS18 is comprised of high efficient Buck converters
+	 including Dual-Phase Buck converter, Buck-Boost converter, various LDOs.
+
+config REGULATOR_S2MPB02
+	tristate "Samsung S2MPB02 regulator"
+	depends on MFD_S2MPB02
+	help
+	 This driver controls a Samsung S2MPB02 regulator
+	 via I2C bus.
+
+config REGULATOR_S2MPB03
+	tristate "Samsung S2MPB03 regulator"
+	depends on I2C
+	help
+	 This driver controls a Samsung S2MPB03 regulator
+	 via I2C bus.
+
+config REGULATOR_S2DOS03
+	tristate "Samsung S2DOS03 regulator"
+	depends on I2C
+	help
+	 This driver controls a Samsung S2DOS03 regulator
+	 via I2C bus.
+
+config REGULATOR_S2DOS05
+	tristate "Samsung S2DOS05 regulator"
+	depends on I2C
+	help
+	 This driver controls a Samsung S2DOS05 regulator
+	 via I2C bus.
 
 config REGULATOR_S5M8767
 	tristate "Samsung S5M8767A voltage regulator"

@@ -230,4 +230,74 @@ config ARCH_ZYNQMP
 	help
 	  This enables support for Xilinx ZynqMP Family
 
+menu "Samsung Exynos"
+config ARCH_EXYNOS
+	bool
+
+config SOC_EXYNOS8895
+	bool "Samsung EXYNOS8895"
+	select SOC_SAMSUNG
+	select ARCH_EXYNOS
+	select ARCH_HAS_CPUFREQ
+	select HAVE_S3C2410_I2C if I2C
+	select HAVE_S3C2410_WATCHDOG if WATCHDOG
+	select HAVE_S3C_RTC if RTC_CLASS
+	select ARCH_SUPPORTS_MSI
+	select ARM_AMBA
+	select CLKSRC_OF
+	select USE_OF
+	select COMMON_CLK_SAMSUNG
+	select CLKSRC_EXYNOS_MCT
+	select PINCTRL
+
+config ARCH_EXYNOS8
+	bool "ARMv8 based Samsung Exynos8"
+	select HAVE_ARM_SCU if SMP
+	select HAVE_SMP
+	help
+	  Samsung EXYNOS8 (Mongoose/A53) SoC based systems
+
+config SOC_EXYNOS9810
+	bool "Samsung EXYNOS9810"
+	select SOC_SAMSUNG
+	select ARCH_EXYNOS
+	select ARCH_HAS_CPUFREQ
+	select HAVE_S3C2410_I2C if I2C
+	select HAVE_S3C2410_WATCHDOG if WATCHDOG
+	select HAVE_S3C_RTC if RTC_CLASS
+	select ARCH_SUPPORTS_MSI
+	select ARM_AMBA
+	select CLKSRC_OF
+	select USE_OF
+	select COMMON_CLK_SAMSUNG
+	select CLKSRC_EXYNOS_MCT
+	select PINCTRL
+	select SAMSUNG_DMADEV
+
+config SOC_EXYNOS9810_EVT1
+	bool "Samsung EXYNOS9810_EVT1"
+	depends on SOC_EXYNOS9810
+
+config ARCH_EXYNOS9
+	bool "ARMv8 based Samsung Exynos9"
+	select HAVE_ARM_SCU if SMP
+	select HAVE_SMP
+	help
+	  Samsung EXYNOS9 (Meercat/Ananke) SoC based systems
+
+config ZONE_MOVABLE
+	bool "Enable Zone Movable"
+	default n
+
+config ZONE_MOVABLE_SIZE_MBYTES
+	int "ZONE_MOVABLE Size in MBytes"
+	range 0 1024
+	default 0
+	depends on ZONE_MOVABLE
+	help
+	  Set Movable Zone size based on bits shift value. Movable Zone size
+	  must be less than the highest populated zone.
+
+endmenu
+
 endmenu

@@ -35,6 +35,39 @@ struct ion_test_rw_data {
 	int __padding;
 };
 
+/**
+ * struct ion_test_phys_data - metadata passed to the kernel to check phys
+ * @cmd:	what to test. One of the followings:
+ *		- PHYS_CHUNK_IS_IDENTICAL_SIZE: check if physical memory is
+ *		  a set of memory chunks with identical size. If this test
+ *		  succeeds, ion_test driver stores the chunk size to
+ *		  ion_test_phys_data.result.
+ *		- PHYS_IS_ORDERED_IN_ADDRESS: check if physical memory is
+ *		  sorted in address order of each physical memory chunks.
+ *		- PHYS_IS_RESERVED: check if physically contiguous and its
+ *		  carved out(!pfn_valid()) or reserve (PG_reserved)
+ *		- PHYS_IS_CMA: check if physically contiguous and its
+ *		  migratetype is MIGRATE_CMA
+ *		- PHYS_IS_ALIGNED: check if the address of the first physical
+ *		  memory chunk is aligned by @arg.
+ * @arg:	an argument to @cmd. the meaning of @arg varies according to
+ *		@cmd.
+ * @result:	result of @cmd is stored if required.
+ */
+enum {
+	PHYS_CHUNK_IS_IDENTICAL_SIZE = 0,
+	PHYS_IS_ORDERED_IN_ADDRESS = 1,
+	PHYS_IS_RESERVED = 2,
+	PHYS_IS_CMA = 3,
+	PHYS_IS_ALIGNED = 4,
+};
+
+struct ion_test_phys_data {
+	__u32 cmd;
+	__u32 arg;
+	__u32 result;
+};
+
 #define ION_IOC_MAGIC		'I'
 
 /**
@@ -66,5 +99,13 @@ struct ion_test_rw_data {
 #define ION_IOC_TEST_KERNEL_MAPPING \
 			_IOW(ION_IOC_MAGIC, 0xf2, struct ion_test_rw_data)
 
+/**
+ * DOC: ION_IOC_TEST_PHYS - Study the properties of physical memory
+ *
+ * Studies the properties of the physical memory of the allocated buffer from
+ * ION.
+ */
+#define ION_IOC_TEST_PHYS \
+			_IOWR(ION_IOC_MAGIC, 0xf3, struct ion_test_phys_data)
 
 #endif /* _UAPI_LINUX_ION_H */

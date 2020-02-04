@@ -70,13 +70,21 @@ static long ratelimit_pages = 32;
 /*
  * Start background writeback (via writeback threads) at this percentage
  */
-int dirty_background_ratio = 10;
+#ifdef CONFIG_LARGE_DIRTY_BUFFER
+int dirty_background_ratio = 5;
+#else
+int dirty_background_ratio;
+#endif
 
 /*
  * dirty_background_bytes starts at 0 (disabled) so that it is a function of
  * dirty_background_ratio * the amount of dirtyable memory
  */
+#ifdef CONFIG_LARGE_DIRTY_BUFFER
 unsigned long dirty_background_bytes;
+#else
+unsigned long dirty_background_bytes = 25 * 1024 * 1024;
+#endif
 
 /*
  * free highmem will not be subtracted from the total free memory
@@ -87,13 +95,21 @@ int vm_highmem_is_dirtyable;
 /*
  * The generator of dirty data starts writeback at this percentage
  */
+#ifdef CONFIG_LARGE_DIRTY_BUFFER
 int vm_dirty_ratio = 20;
+#else
+int vm_dirty_ratio;
+#endif
 
 /*
  * vm_dirty_bytes starts at 0 (disabled) so that it is a function of
  * vm_dirty_ratio * the amount of dirtyable memory
  */
+#ifdef CONFIG_LARGE_DIRTY_BUFFER
 unsigned long vm_dirty_bytes;
+#else
+unsigned long vm_dirty_bytes = 50 * 1024 * 1024;
+#endif
 
 /*
  * The interval between `kupdate'-style writebacks
@@ -391,7 +407,7 @@ static unsigned long global_dirtyable_memory(void)
  */
 static void domain_dirty_limits(struct dirty_throttle_control *dtc)
 {
-	const unsigned long available_memory = dtc->avail;
+	unsigned long available_memory = dtc->avail;
 	struct dirty_throttle_control *gdtc = mdtc_gdtc(dtc);
 	unsigned long bytes = vm_dirty_bytes;
 	unsigned long bg_bytes = dirty_background_bytes;
@@ -426,6 +442,14 @@ static void domain_dirty_limits(struct dirty_throttle_control *dtc)
 		thresh = DIV_ROUND_UP(bytes, PAGE_SIZE);
 	else
 		thresh = (ratio * available_memory) / PAGE_SIZE;
+
+#if defined(CONFIG_MAX_DIRTY_THRESH_PAGES) && CONFIG_MAX_DIRTY_THRESH_PAGES > 0
+	if (!bytes && thresh > CONFIG_MAX_DIRTY_THRESH_PAGES) {
+		thresh = CONFIG_MAX_DIRTY_THRESH_PAGES;
+		/* reduce available memory not to make bg_thresh too high */
+		available_memory = thresh * PAGE_SIZE / ratio;
+	}
+#endif
 
 	if (bg_bytes)
 		bg_thresh = DIV_ROUND_UP(bg_bytes, PAGE_SIZE);
@@ -484,6 +508,11 @@ static unsigned long node_dirty_limit(struct pglist_data *pgdat)
 			node_memory / global_dirtyable_memory();
 	else
 		dirty = vm_dirty_ratio * node_memory / 100;
+
+#if defined(CONFIG_MAX_DIRTY_THRESH_PAGES) && CONFIG_MAX_DIRTY_THRESH_PAGES > 0
+	if (!vm_dirty_bytes && dirty > CONFIG_MAX_DIRTY_THRESH_PAGES)
+		dirty = CONFIG_MAX_DIRTY_THRESH_PAGES;
+#endif
 
 	if (tsk->flags & PF_LESS_THROTTLE || rt_task(tsk))
 		dirty += dirty / 4;
@@ -1559,6 +1588,9 @@ static inline void wb_dirty_limits(struct dirty_throttle_control *dtc)
  * If we're over `background_thresh' then the writeback threads are woken to
  * perform some writeout.
  */
+
+SIO_PATCH_VERSION(prevent_infinite_writeback, 1, 0, "");
+
 static void balance_dirty_pages(struct address_space *mapping,
 				struct bdi_writeback *wb,
 				unsigned long pages_dirtied)
@@ -1777,6 +1809,17 @@ pause:
 					  period,
 					  pause,
 					  start_time);
+
+		/* IOPP-prevent_infinite_writeback-v1.0.4.4 */
+		/* Do not sleep if the backing device is removed */
+		if (unlikely(!bdi->dev))
+			return;
+
+		/* Collecting approximate value. No lock required. */
+		bdi->last_thresh = thresh;
+		bdi->last_nr_dirty = dirty;
+		bdi->paused_total += pause;
+
 		__set_current_state(TASK_KILLABLE);
 		io_schedule_timeout(pause);
 
@@ -2185,13 +2228,29 @@ retry:
 	while (!done && (index <= end)) {
 		int i;
 
-		nr_pages = pagevec_lookup_range_tag(&pvec, mapping, &index, end,
-				tag);
+		nr_pages = pagevec_lookup_tag(&pvec, mapping, &index, tag,
+			      min(end - index, (pgoff_t)PAGEVEC_SIZE-1) + 1);
 		if (nr_pages == 0)
 			break;
 
 		for (i = 0; i < nr_pages; i++) {
 			struct page *page = pvec.pages[i];
+
+			/*
+			 * At this point, the page may be truncated or
+			 * invalidated (changing page->mapping to NULL), or
+			 * even swizzled back from swapper_space to tmpfs file
+			 * mapping. However, page->index will not change
+			 * because we have a reference on the page.
+			 */
+			if (page->index > end) {
+				/*
+				 * can't be range_cyclic (1st pass) because
+				 * end == -1 in that case.
+				 */
+				done = 1;
+				break;
+			}
 
 			done_index = page->index;
 
@@ -2697,9 +2756,10 @@ EXPORT_SYMBOL(clear_page_dirty_for_io);
 int test_clear_page_writeback(struct page *page)
 {
 	struct address_space *mapping = page_mapping(page);
+	struct mem_cgroup *memcg;
 	int ret;
 
-	lock_page_memcg(page);
+	memcg = lock_page_memcg(page);
 	if (mapping && mapping_use_writeback_tags(mapping)) {
 		struct inode *inode = mapping->host;
 		struct backing_dev_info *bdi = inode_to_bdi(inode);
@@ -2727,13 +2787,20 @@ int test_clear_page_writeback(struct page *page)
 	} else {
 		ret = TestClearPageWriteback(page);
 	}
+	/*
+	 * NOTE: Page might be free now! Writeback doesn't hold a page
+	 * reference on its own, it relies on truncation to wait for
+	 * the clearing of PG_writeback. The below can only access
+	 * page state that is static across allocation cycles.
+	 */
 	if (ret) {
-		mem_cgroup_dec_page_stat(page, MEM_CGROUP_STAT_WRITEBACK);
+		__mem_cgroup_update_page_stat(page, memcg,
+					      MEM_CGROUP_STAT_WRITEBACK, -1);
 		dec_node_page_state(page, NR_WRITEBACK);
 		dec_zone_page_state(page, NR_ZONE_WRITE_PENDING);
 		inc_node_page_state(page, NR_WRITTEN);
 	}
-	unlock_page_memcg(page);
+	__unlock_page_memcg(memcg);
 	return ret;
 }
 

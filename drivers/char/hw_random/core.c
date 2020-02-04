@@ -44,6 +44,7 @@
 #include <linux/random.h>
 #include <linux/err.h>
 #include <asm/uaccess.h>
+#include <linux/freezer.h>
 
 
 #define RNG_MODULE_NAME		"hw_random"
@@ -405,6 +406,8 @@ static int __init register_miscdev(void)
 static int hwrng_fillfn(void *unused)
 {
 	long rc;
+
+	set_freezable();
 
 	while (!kthread_should_stop()) {
 		struct hwrng *rng;

@@ -8,6 +8,7 @@ snd-soc-s3c-i2s-v2-objs := s3c-i2s-v2.o
 snd-soc-samsung-spdif-objs := spdif.o
 snd-soc-pcm-objs := pcm.o
 snd-soc-i2s-objs := i2s.o
+snd-soc-dp_dma-objs := dp_dma.o dummy_cpu_dai.o
 
 obj-$(CONFIG_SND_SOC_SAMSUNG) += snd-soc-s3c-dma.o
 obj-$(CONFIG_SND_S3C24XX_I2S) += snd-soc-s3c24xx-i2s.o
@@ -18,6 +19,9 @@ obj-$(CONFIG_SND_SAMSUNG_SPDIF) += snd-soc-samsung-spdif.o
 obj-$(CONFIG_SND_SAMSUNG_PCM) += snd-soc-pcm.o
 obj-$(CONFIG_SND_SAMSUNG_I2S) += snd-soc-i2s.o
 obj-$(CONFIG_SND_SAMSUNG_I2S) += snd-soc-idma.o
+obj-$(CONFIG_SND_SOC_SAMSUNG_DISPLAYPORT) += snd-soc-dp_dma.o
+obj-$(CONFIG_SND_SOC_SAMSUNG_VTS) += vts/
+obj-$(CONFIG_SND_SOC_SAMSUNG_ABOX) += abox/
 
 # S3C24XX Machine Support
 snd-soc-jive-wm8750-objs := jive_wm8750.o
@@ -44,6 +48,8 @@ snd-soc-lowland-objs := lowland.o
 snd-soc-littlemill-objs := littlemill.o
 snd-soc-bells-objs := bells.o
 snd-soc-arndale-rt5631-objs := arndale_rt5631.o
+snd-soc-star-madera-objs := star_madera.o jack_madera_sysfs_cb.o
+snd-soc-sec-audio-objs := sec_audio_sysfs.o sec_audio_debug.o
 
 obj-$(CONFIG_SND_SOC_SAMSUNG_JIVE_WM8750) += snd-soc-jive-wm8750.o
 obj-$(CONFIG_SND_SOC_SAMSUNG_NEO1973_WM8753) += snd-soc-neo1973-wm8753.o
@@ -69,3 +75,8 @@ obj-$(CONFIG_SND_SOC_LOWLAND) += snd-soc-lowland.o
 obj-$(CONFIG_SND_SOC_LITTLEMILL) += snd-soc-littlemill.o
 obj-$(CONFIG_SND_SOC_BELLS) += snd-soc-bells.o
 obj-$(CONFIG_SND_SOC_ARNDALE_RT5631_ALC5631) += snd-soc-arndale-rt5631.o
+obj-$(CONFIG_SND_SOC_SAMSUNG_EXYNOS8895_MOON) += exynos8895_madera.o
+obj-$(CONFIG_SND_SOC_SAMSUNG_EXYNOS8895_COD3033) += exynos8895_sound.o
+obj-$(CONFIG_SND_SOC_SAMSUNG_EXYNOS9810_MOON) += exynos9810_madera.o
+obj-$(CONFIG_SND_SOC_SAMSUNG_STAR_ASHETON) += snd-soc-star-madera.o
+obj-$(CONFIG_SND_SOC_SAMSUNG_AUDIO) += snd-soc-sec-audio.o

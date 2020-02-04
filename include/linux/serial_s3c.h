@@ -40,6 +40,15 @@
 #define S3C2410_UERSTAT	  (0x14)
 #define S3C2410_UFSTAT	  (0x18)
 #define S3C2410_UMSTAT	  (0x1C)
+#define S3C2410_UFLT	  (0x40)
+
+#define USI_CON	  		(0xC4)
+#define USI_OPTION		(0xC8)
+
+#define USI_RESET			(0<<0)
+#define USI_SET_RESET			(1<<0)
+#define USI_HWACG_CLKREQ_ON		(1<<1)
+#define USI_HWACG_CLKSTOP_ON		(1<<2)
 
 #define S3C2410_LCON_CFGMASK	  ((0xF<<3)|(0x3))
 
@@ -148,6 +157,8 @@
 #define S3C2410_UFCON_RESETBOTH	  (3<<1)
 #define S3C2410_UFCON_RESETTX	  (1<<2)
 #define S3C2410_UFCON_RESETRX	  (1<<1)
+
+#define S3C2410_UFLT_MAX		  (7<<13)
 
 #define S3C2410_UFCON_DEFAULT	  (S3C2410_UFCON_FIFOMODE | \
 				   S3C2410_UFCON_TXTRIG0  | \
@@ -262,6 +273,7 @@
 #ifndef __ASSEMBLY__
 
 #include <linux/serial_core.h>
+struct uart_port;
 
 /* configuration structure for per-machine configurations for the
  * serial port
@@ -269,6 +281,9 @@
  * the pointer is setup by the machine specific initialisation from the
  * arch/arm/mach-s3c2410/ directory.
 */
+
+typedef void (*s3c_wake_peer_t)(struct uart_port *port);
+extern s3c_wake_peer_t s3c2410_serial_wake_peer[CONFIG_SERIAL_SAMSUNG_UARTS];
 
 struct s3c2410_uartcfg {
 	unsigned char	   hwport;	 /* hardware port number */
@@ -282,6 +297,8 @@ struct s3c2410_uartcfg {
 	unsigned long	   ucon;	 /* value of ucon for port */
 	unsigned long	   ulcon;	 /* value of ulcon for port */
 	unsigned long	   ufcon;	 /* value of ufcon for port */
+
+	s3c_wake_peer_t wake_peer[CONFIG_SERIAL_SAMSUNG_UARTS];
 };
 
 #endif /* __ASSEMBLY__ */

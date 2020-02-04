@@ -978,6 +978,10 @@ static struct usb_device *usbdev_lookup_by_devt(dev_t devt)
 	return to_usb_device(dev);
 }
 
+#ifdef CONFIG_USB_DEBUG_DETAILED_LOG
+static unsigned int prev_cmd = 0;
+static int prev_ret = 0;
+#endif
 /*
  * file operations
  */
@@ -1032,6 +1036,10 @@ static int usbdev_open(struct inode *inode, struct file *file)
 	usb_unlock_device(dev);
 	snoop(&dev->dev, "opened by process %d: %s\n", task_pid_nr(current),
 			current->comm);
+#ifdef CONFIG_USB_DEBUG_DETAILED_LOG
+	prev_cmd = 0;
+	prev_ret = 0;
+#endif
 	return ret;
 
  out_unlock_device:
@@ -2568,13 +2576,102 @@ static long usbdev_do_ioctl(struct file *file, unsigned int cmd,
 	return ret;
 }
 
+#ifdef CONFIG_USB_DEBUG_DETAILED_LOG
+static int usbdev_log(unsigned int cmd, int ret)
+{
+	char *cmd_string;
+
+	switch (cmd) {
+	case USBDEVFS_CONTROL:
+		cmd_string = "CONTROL";
+		break;
+	case USBDEVFS_BULK:
+		cmd_string = "BULK";
+		break;
+	case USBDEVFS_RESETEP:
+		cmd_string = "RESETEP";
+		break;
+	case USBDEVFS_RESET:
+		cmd_string = "RESET";
+		break;
+	case USBDEVFS_CLEAR_HALT:
+		cmd_string = "CLEAR_HALT";
+		break;
+	case USBDEVFS_GETDRIVER:
+		cmd_string = "GETDRIVER";
+		break;
+	case USBDEVFS_CONNECTINFO:
+		cmd_string = "CONNECTINFO";
+		break;
+	case USBDEVFS_SETINTERFACE:
+		cmd_string = "SETINTERFACE";
+		break;
+	case USBDEVFS_SETCONFIGURATION:
+		cmd_string = "SETCONFIGURATION";
+		break;
+	case USBDEVFS_SUBMITURB:
+		cmd_string = "SUBMITURB";
+		break;
+	case USBDEVFS_DISCARDURB:
+		cmd_string = "DISCARDURB";
+		break;
+	case USBDEVFS_REAPURB:
+		cmd_string = "REAPURB";
+		break;
+	case USBDEVFS_REAPURBNDELAY:
+		cmd_string = "REAPURBNDELAY";
+		break;
+	case USBDEVFS_DISCSIGNAL:
+		cmd_string = "DISCSIGNAL";
+		break;
+	case USBDEVFS_CLAIMINTERFACE:
+		cmd_string = "CLAIMINTERFACE";
+		break;
+	case USBDEVFS_RELEASEINTERFACE:
+		cmd_string = "RELEASEINTERFACE";
+		break;
+	case USBDEVFS_IOCTL:
+		cmd_string = "IOCTL";
+		break;
+	case USBDEVFS_CLAIM_PORT:
+		cmd_string = "CLAIM_PORT";
+		break;
+	case USBDEVFS_RELEASE_PORT:
+		cmd_string = "RELEASE_PORT";
+		break;
+	case USBDEVFS_GET_CAPABILITIES:
+		cmd_string = "GET_CAPABILITIES";
+		break;
+	case USBDEVFS_DISCONNECT_CLAIM:
+		cmd_string = "DISCONNECT_CLAIM";
+		break;
+	default:
+		cmd_string = "DEFAULT";
+		break;
+	}
+	if ((prev_cmd != cmd) || (prev_ret != ret)) {
+		printk(KERN_ERR "%s: %s error ret=%d\n", __func__, cmd_string, ret);
+		prev_cmd = cmd;
+		prev_ret = ret;
+	}
+	return 0;
+}
+#endif
+
 static long usbdev_ioctl(struct file *file, unsigned int cmd,
 			unsigned long arg)
 {
 	int ret;
 
 	ret = usbdev_do_ioctl(file, cmd, (void __user *)arg);
-
+#ifdef CONFIG_USB_DEBUG_DETAILED_LOG
+	if (ret < 0)
+		usbdev_log(cmd, ret);
+	else {
+		prev_cmd = 0;
+		prev_ret = 0;
+	}
+#endif
 	return ret;
 }
 
@@ -2669,13 +2766,13 @@ int __init usb_devio_init(void)
 	retval = register_chrdev_region(USB_DEVICE_DEV, USB_DEVICE_MAX,
 					"usb_device");
 	if (retval) {
-		printk(KERN_ERR "Unable to register minors for usb_device\n");
+		pr_err("Unable to register minors for usb_device\n");
 		goto out;
 	}
 	cdev_init(&usb_device_cdev, &usbdev_file_operations);
 	retval = cdev_add(&usb_device_cdev, USB_DEVICE_DEV, USB_DEVICE_MAX);
 	if (retval) {
-		printk(KERN_ERR "Unable to get usb_device major %d\n",
+		pr_err("Unable to get usb_device major %d\n",
 		       USB_DEVICE_MAJOR);
 		goto error_cdev;
 	}
