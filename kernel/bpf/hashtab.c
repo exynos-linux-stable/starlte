@@ -47,9 +47,9 @@ struct htab_elem {
 		struct {
 			void *padding;
 			union {
-		struct bpf_htab *htab;
-		struct pcpu_freelist_node fnode;
-	};
+				struct bpf_htab *htab;
+				struct pcpu_freelist_node fnode;
+			};
 		};
 	};
 	union {

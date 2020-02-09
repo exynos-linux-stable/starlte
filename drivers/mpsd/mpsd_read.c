@@ -11,6 +11,7 @@
 
 #include <linux/mm.h>
 #include <linux/sched.h>
+#include <linux/sched/loadavg.h>
 #include <linux/tick.h>
 #include <linux/kernel_stat.h>
 #include <linux/cpufreq.h>
@@ -3914,4 +3915,3 @@ void mpsd_read_exit(void)
 	mutex_destroy(&mpsd_read_lock);
 	pr_info("%s: %s: Done!\n", tag, __func__);
 }
-

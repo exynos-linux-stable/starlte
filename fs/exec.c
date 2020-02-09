@@ -950,7 +950,7 @@ int kernel_read_file(struct file *file, void **buf, loff_t *size,
 				    i_size - pos);
 		if (bytes < 0) {
 			ret = bytes;
-			goto out;
+			goto out_free;
 		}
 
 		if (bytes == 0)
@@ -1274,8 +1274,8 @@ extern struct super_block *vendor_sb;	/* pointer to superblock */
 extern struct super_block *rootfs_sb;	/* pointer to superblock */
 extern int is_recovery;
 
-static int kdp_check_sb_mismatch(struct super_block *sb) 
-{	
+static int kdp_check_sb_mismatch(struct super_block *sb)
+{
 	if(is_recovery) {
 		return 0;
 	}
@@ -1285,17 +1285,17 @@ static int kdp_check_sb_mismatch(struct super_block *sb)
 	}
 	return 0;
 }
-static int invalid_drive(struct linux_binprm * bprm) 
+static int invalid_drive(struct linux_binprm * bprm)
 {
 	struct super_block *sb =  NULL;
 	struct vfsmount *vfsmnt = NULL;
-	
+
 	vfsmnt = bprm->file->f_path.mnt;
-	if(!vfsmnt || 
+	if(!vfsmnt ||
 		!rkp_ro_page((unsigned long)vfsmnt)) {
 		printk("\nInvalid Drive #%s# #%p#\n",bprm->filename, vfsmnt);
 		return 1;
-	} 
+	}
 	sb = vfsmnt->mnt_sb;
 
 	if(kdp_check_sb_mismatch(sb)) {
@@ -1345,7 +1345,7 @@ int flush_old_exec(struct linux_binprm * bprm)
 	acct_arg_size(bprm, 0);
 #ifdef CONFIG_RKP_NS_PROT
 	if(rkp_cred_enable &&
-		is_rkp_priv_task() && 
+		is_rkp_priv_task() &&
 		invalid_drive(bprm)) {
 		panic("\n KDP_NS_PROT: Illegal Execution of file #%s#\n",bprm->filename);
 	}
@@ -1793,7 +1793,7 @@ static int rkp_restrict_fork(struct filename *path)
 	    !strcmp(path->name, "/system/bin/idmap2")) {
 		return 0 ;
 	}
-        /* If the Process is from Linux on Dex, 
+        /* If the Process is from Linux on Dex,
         then no need to reduce privilege */
 #ifdef CONFIG_LOD_SEC
 	if(rkp_is_lod(current)){

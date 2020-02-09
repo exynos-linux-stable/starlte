@@ -1711,6 +1711,9 @@ static int __bpf_redirect(struct sk_buff *skb, struct net_device *dev,
 	case ARPHRD_IPGRE:
 	case ARPHRD_VOID:
 	case ARPHRD_NONE:
+#ifdef ARPHRD_RAWIP
+	case ARPHRD_RAWIP:
+#endif
 	case ARPHRD_PPP:
 		return __bpf_redirect_no_mac(skb, dev, flags);
 	default:
