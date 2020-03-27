@@ -127,6 +127,14 @@ static inline bool is_audio(u32 stream_type)
 	return is_audio;
 }
 
+static inline bool is_psi_invalid(int len)
+{
+	if (len < 0 || len >= TSMUX_PSI_SIZE * sizeof(int))
+		return true;
+
+	return false;
+}
+
 static int tsmux_iommu_fault_handler(
 	struct iommu_domain *domain, struct device *dev,
 	unsigned long fault_addr, int fault_flags, void *token)
@@ -570,10 +578,12 @@ int tsmux_ioctl_m2m_run(struct tsmux_context *ctx)
 			tsmux_set_info(ctx, &m2m_job->swp_ctrl, &m2m_job->hex_ctrl);
 
 			psi_validation = 1;
-			if (ctx->psi_info.pat_len < 0 || ctx->psi_info.pmt_len < 0 || ctx->psi_info.pcr_len < 0)
+			if (is_psi_invalid(ctx->psi_info.pat_len) ||
+				is_psi_invalid(ctx->psi_info.pmt_len) ||
+				is_psi_invalid(ctx->psi_info.pcr_len))
 				psi_validation = 0;
 			psi_len = ctx->psi_info.pat_len + ctx->psi_info.pmt_len + ctx->psi_info.pcr_len;
-			if (psi_len >= TSMUX_PSI_SIZE * sizeof(int))
+			if (is_psi_invalid(psi_len))
 				psi_validation = 0;
 			print_tsmux(TSMUX_M2M, "pkt_ctrl.psi_en %d, psi_validation %d\n",
 				m2m_job->pkt_ctrl.psi_en, psi_validation);
@@ -872,10 +882,12 @@ int packetize(struct packetizing_param *param)
 	ctx->otf_psi_enabled[index] = ctx->otf_cmd_queue.config.pkt_ctrl.psi_en;
 
 	psi_validation = 1;
-	if (ctx->psi_info.pat_len < 0 || ctx->psi_info.pmt_len < 0 || ctx->psi_info.pcr_len < 0)
+	if (is_psi_invalid(ctx->psi_info.pat_len) ||
+		is_psi_invalid(ctx->psi_info.pmt_len) ||
+		is_psi_invalid(ctx->psi_info.pcr_len))
 		psi_validation = 0;
 	psi_len = ctx->psi_info.pat_len + ctx->psi_info.pmt_len + ctx->psi_info.pcr_len;
-	if (psi_len >= TSMUX_PSI_SIZE * sizeof(int))
+	if (is_psi_invalid(psi_len))
 		psi_validation = 0;
 	print_tsmux(TSMUX_OTF, "pkt_ctrl.psi_en %d, psi_validation %d\n",
 		ctx->otf_cmd_queue.config.pkt_ctrl.psi_en, psi_validation);
