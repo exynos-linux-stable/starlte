@@ -1433,6 +1433,7 @@ CONFIG_CP_RAM_LOGGING=y
 # CONFIG_HW_REV_DETECT is not set
 CONFIG_MODEM_IF_QOS=y
 CONFIG_MODEM_IF_NET_GRO=y
+CONFIG_KLAT=y
 
 #
 # Samsung Modem Interface Driver for Memory-type Interface

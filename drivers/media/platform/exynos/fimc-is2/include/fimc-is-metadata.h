@@ -1064,7 +1064,10 @@ struct camera2_aa_ctl {
 	float				vendor_objectDistanceCm;
 	int32_t				vendor_colorTempKelvin;
 	int32_t				vendor_enableDynamicShotDm;
-	uint32_t			vendor_reserved[8];
+	uint32_t			vendor_captureHint;
+	int32_t				vendor_captureEV;
+	uint32_t			vendor_ssrmHint;
+	uint32_t			vendor_reserved[5];
 };
 
 struct camera2_aa_dm {
