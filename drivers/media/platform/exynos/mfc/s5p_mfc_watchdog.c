@@ -345,6 +345,64 @@ static void mfc_print_trace_longterm(struct s5p_mfc_dev *dev)
 				dev->mfc_trace_longterm[cnt].time, dev->mfc_trace_longterm[cnt].str);
 	}
 }
+static void mfc_print_dpb_queue(struct s5p_mfc_dev *dev)
+{
+	struct s5p_mfc_ctx *ctx = dev->ctx[dev->curr_ctx];
+	struct s5p_mfc_dec *dec = NULL;
+	struct s5p_mfc_buf *mfc_buf = NULL;
+	int i, index = 0;
+
+	if (!ctx)
+		return;
+
+	dec = ctx->dec_priv;
+
+	if (ctx->type != MFCINST_DECODER || dec == NULL)
+		return;
+
+	pr_err("-----------dumping MFC DPB queue (used flag: %#x)\n",
+			s5p_mfc_get_dec_used_flag());
+	pr_err("used %#x, set %#x, avail %#lx\n",
+			dec->dynamic_used, dec->dynamic_set, dec->available_dpb);
+
+	if (!list_empty(&ctx->dst_buf_queue.head)) {
+		list_for_each_entry(mfc_buf, &ctx->dst_buf_queue.head, list) {
+			index = mfc_buf->vb.vb2_buf.index;
+			pr_err("dst[%d]: Plane[0] fd:%d Addr:%#llx / Plane[1] fd:%d Addr:%#llx\n",
+					index,
+					mfc_buf->vb.vb2_buf.planes[0].m.fd,
+					mfc_buf->planes.raw[0],
+					mfc_buf->vb.vb2_buf.planes[1].m.fd,
+					mfc_buf->planes.raw[1]);
+		}
+	}
+	if (!list_empty(&ctx->ref_buf_queue.head)) {
+		list_for_each_entry(mfc_buf, &ctx->ref_buf_queue.head, list) {
+			index = mfc_buf->vb.vb2_buf.index;
+			pr_err("ref[%d]: Plane[0] fd:%d Addr:%#llx / Plane[1] fd:%d Addr:%#llx\n",
+					index,
+					mfc_buf->vb.vb2_buf.planes[0].m.fd,
+					mfc_buf->planes.raw[0],
+					mfc_buf->vb.vb2_buf.planes[1].m.fd,
+					mfc_buf->planes.raw[1]);
+		}
+	}
+	if (!list_empty(&ctx->dst_buf_nal_queue.head)) {
+		list_for_each_entry(mfc_buf, &ctx->dst_buf_nal_queue.head, list) {
+			index = mfc_buf->vb.vb2_buf.index;
+			pr_err("dst nal[%d]: Plane[0] fd:%d Addr:%#llx / Plane[1] fd:%d Addr:%#llx\n",
+					index,
+					mfc_buf->vb.vb2_buf.planes[0].m.fd,
+					mfc_buf->planes.raw[0],
+					mfc_buf->vb.vb2_buf.planes[1].m.fd,
+					mfc_buf->planes.raw[1]);
+		}
+	}
+
+	for (i = 0; i < MFC_MAX_DPBS; i++)
+		if (ctx->dec_priv->assigned_fd[i] != MFC_INFO_INIT_FD)
+			pr_err("fd[%d]: %d\n", i, ctx->dec_priv->assigned_fd[i]);
+}
 
 void s5p_mfc_dump_buffer_info(struct s5p_mfc_dev *dev, unsigned long addr)
 {
@@ -432,6 +490,7 @@ void s5p_mfc_dump_info_and_stop_hw(struct s5p_mfc_dev *dev)
 	MFC_TRACE_DEV("** mfc will stop!!!\n");
 	mfc_display_state(dev);
 	mfc_print_trace(dev);
+	mfc_print_dpb_queue(dev);
 	mfc_save_logging_sfr(dev);
 	mfc_dump_regs(dev);
 	exynos_sysmmu_show_status(dev->device);

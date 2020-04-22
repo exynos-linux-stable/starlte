@@ -1660,10 +1660,13 @@ static int abox_rdma_mmap(struct snd_pcm_substream *substream,
 	abox_request_cpu_gear_dai(dev, data->abox_data, rtd->cpu_dai,
 			data->abox_data->cpu_gear_min - 1);
 
-	return dma_mmap_writecombine(dev, vma,
-			runtime->dma_area,
-			runtime->dma_addr,
-			runtime->dma_bytes);
+	if (data->buf_type == BUFFER_TYPE_ION)
+		return dma_buf_mmap(data->ion_buf.dma_buf, vma, 0);
+	else
+		return dma_mmap_writecombine(dev, vma,
+				runtime->dma_area,
+				runtime->dma_addr,
+				runtime->dma_bytes);
 }
 
 static int abox_rdma_ack(struct snd_pcm_substream *substream)

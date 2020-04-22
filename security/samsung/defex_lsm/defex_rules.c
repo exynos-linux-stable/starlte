@@ -13,7 +13,6 @@ const struct static_rule defex_static_rules[] = {
 	{feature_safeplace_status,"1"},
 	{feature_immutable_status,"1"},
 	{feature_ped_status,"1"},
-	{feature_ped_tgid,"1"},
 #ifndef DEFEX_USE_PACKED_RULES
 	{feature_ped_exception,"/system/bin/run-as"},	/* DEFAULT */
 	{feature_ped_exception,"/system/bin/dumpstate"},	/* DEFAULT */

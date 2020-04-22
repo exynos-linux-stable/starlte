@@ -33,6 +33,11 @@
 			reg = <0x0 0xF9200000 0x2000000>;
 		};
 
+		zswap_debug {
+			compatible = "exynos,zswap_debug";
+			reg = <0x0 0x91300000 0x1000>;
+		};
+
 		sec_debug_magic {
 			compatible = "exynos,sec_debug_magic";
 			reg = <0x0 0x80000000 0x1000>;

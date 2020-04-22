@@ -24,6 +24,9 @@
 #include <linux/exynos_ion.h>
 #include <linux/wait.h>
 #include <media/exynos_tsmux.h>
+#ifdef CONFIG_EXYNOS_ITMON
+#include <soc/samsung/exynos-itmon.h>
+#endif
 
 #include "tsmux.h"
 
@@ -45,12 +48,18 @@ struct tsmux_buffer_info {
 	enum otf_buf_state buf_state;
 };
 
+struct tsmux_watchdog_tick {
+	atomic_t watchdog_tick_running;
+	atomic_t watchdog_tick_count;
+};
+
 struct tsmux_device {
 	struct miscdevice misc_dev;
 	struct device *dev;
 
 	uint32_t hw_version;
 	void __iomem *regs_base;
+	void __iomem *regs_base_cmu_mfc;
 	struct resource *tsmux_mem;
 	struct clk *tsmux_clock;
 	int irq;
@@ -59,6 +68,13 @@ struct tsmux_device {
 
 	int ctx_cnt;
 	int ctx_cur;
+
+#ifdef CONFIG_EXYNOS_ITMON
+	struct notifier_block itmon_nb;
+#endif
+	struct timer_list watchdog_timer;
+	struct work_struct watchdog_work;
+	struct tsmux_watchdog_tick watchdog_tick[TSMUX_MAX_CMD_QUEUE_NUM];
 
 	struct tsmux_context *ctx[TSMUX_MAX_CONTEXTS_NUM];
 	struct ion_client *tsmux_ion_client;
@@ -82,6 +98,7 @@ struct tsmux_context {
 
 	bool otf_psi_enabled[TSMUX_OUT_BUF_CNT];
 	bool otf_job_queued;
+	bool otf_buf_mapped;
 
 	wait_queue_head_t m2m_wait_queue;
 	wait_queue_head_t otf_wait_queue;
